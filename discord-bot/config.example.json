@@ -1,0 +1,11 @@
+{
+  "socketAuth": {
+    "token": "replace-with-shared-secret"
+  },
+  "websocket": {
+    "serverUrl": "ws://localhost:8080/"
+  },
+  "features": {
+    "whitelistRequests": true
+  }
+}
