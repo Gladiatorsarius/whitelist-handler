@@ -1,5 +1,6 @@
 package combat.log.report.linking;
 
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -14,21 +15,26 @@ class PlayerLinkingManagerTest {
     @TempDir
     Path tempDir;
 
-    private PlayerLinkingManager manager;
-    private Path dbFile;
-
     @BeforeEach
     void setUp() {
-        dbFile = tempDir.resolve("player-links.json");
-        manager = new PlayerLinkingManager(dbFile);
+        // Initialize the singleton with temp dir
+        PlayerLinkingManager.initialize(tempDir);
+    }
+
+    @AfterEach
+    void tearDown() {
+        // Reset singleton for next test (if needed, but since it's static, may need to clear state)
+        // For simplicity, we'll rely on temp dir isolation
     }
 
     @Test
     void testAddAndGetLink() {
         String discordId = "123456789";
         String uuid = "550e8400-e29b-41d4-a716-446655440000";
+        String name = "TestPlayer";
 
-        manager.addLink(discordId, uuid);
+        PlayerLinkingManager manager = PlayerLinkingManager.getInstance();
+        manager.addLink(discordId, uuid, name, true);
 
         Optional<String> result = manager.getMinecraftUuid(discordId);
         assertTrue(result.isPresent());
@@ -39,16 +45,19 @@ class PlayerLinkingManagerTest {
     void testRemoveLink() {
         String discordId = "123456789";
         String uuid = "550e8400-e29b-41d4-a716-446655440000";
+        String name = "TestPlayer";
 
-        manager.addLink(discordId, uuid);
+        PlayerLinkingManager manager = PlayerLinkingManager.getInstance();
+        manager.addLink(discordId, uuid, name, true);
         assertTrue(manager.getMinecraftUuid(discordId).isPresent());
 
-        manager.removeLink(discordId);
+        manager.removeLink(uuid);
         assertFalse(manager.getMinecraftUuid(discordId).isPresent());
     }
 
     @Test
     void testGetNonExistentLink() {
+        PlayerLinkingManager manager = PlayerLinkingManager.getInstance();
         Optional<String> result = manager.getMinecraftUuid("nonexistent");
         assertFalse(result.isPresent());
     }
@@ -57,11 +66,14 @@ class PlayerLinkingManagerTest {
     void testPersistence() {
         String discordId = "123456789";
         String uuid = "550e8400-e29b-41d4-a716-446655440000";
+        String name = "TestPlayer";
 
-        manager.addLink(discordId, uuid);
+        PlayerLinkingManager manager = PlayerLinkingManager.getInstance();
+        manager.addLink(discordId, uuid, name, true);
 
-        // Create new manager instance to test loading from file
-        PlayerLinkingManager newManager = new PlayerLinkingManager(dbFile);
+        // Create new manager instance by re-initializing (simulates restart)
+        PlayerLinkingManager.initialize(tempDir);
+        PlayerLinkingManager newManager = PlayerLinkingManager.getInstance();
         Optional<String> result = newManager.getMinecraftUuid(discordId);
         assertTrue(result.isPresent());
         assertEquals(uuid, result.get());

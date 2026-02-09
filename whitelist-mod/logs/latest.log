@@ -1,0 +1,6 @@
+[13:37:37] [Test worker/INFO]: No existing link file found at C:\Users\paulm\AppData\Local\Temp\junit8499090247955852747\player-links.json, starting fresh
+[13:37:37] [Test worker/INFO]: Initialized PlayerLinkingManager (0 links)
+[13:37:37] [Test worker/INFO]: Added player link: Discord 123456789 <-> Minecraft TestPlayer (550e8400-e29b-41d4-a716-446655440000)
+[13:37:37] [Test worker/INFO]: Added player link: Discord 123456789 <-> Minecraft TestPlayer (550e8400-e29b-41d4-a716-446655440000)
+[13:37:37] [Test worker/INFO]: Added player link: Discord 123456789 <-> Minecraft TestPlayer (550e8400-e29b-41d4-a716-446655440000)
+[13:37:37] [Test worker/INFO]: Removed player link for Minecraft UUID: 550e8400-e29b-41d4-a716-446655440000 (TestPlayer)

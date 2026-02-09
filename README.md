@@ -10,9 +10,10 @@ Design decisions:
 - The Minecraft server is authoritative for player links (persisted to `config/player-links.json`).
 - The Discord bot no longer performs authoritative writes; it requests the server to create links via `link_create_request` and treats local DB as cache/archive.
 - No migration tool is provided; the existing `whitelist.db` (Discord bot SQLite) is retained as an archive/cache.
+- **Implementation Status**: The authoritative server-side logic has been migrated from `combat-log-report-1.21.11` into `whitelist-mod`. The mod now contains the full WebSocket handlers, PlayerLinkingManager singleton, and whitelist command execution.
 
 Auth:
-- The WebSocket connection is protected by a shared token. Configure `socketAuth.token` / `websocket.authToken` in each component's config to the same value.
+- The WebSocket connection is protected by a shared token. Configure via environment variables `DISCORD_SOCKET_URL` and `DISCORD_AUTH_TOKEN` in the server startup script.
 
 See `docs/websocket-api.md` for message schemas and integration notes.
 # Whitelist Handler
