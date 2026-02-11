@@ -102,7 +102,7 @@ public class WhitelistModalHandler extends ListenerAdapter {
         }
 
         String discordRaw = discordMapping.getAsString().trim();
-        WhitelistManager.WhitelistResult result = whitelistManager.linkFromVanillaThread(payload, discordRaw, event.getUser());
+        WhitelistManager.WhitelistResult result = whitelistManager.linkFromVanillaThread(payload, discordRaw, event.getUser().getId());
 
         if (event.isAcknowledged()) {
             event.getHook().sendMessage(result.message).setEphemeral(true).queue();

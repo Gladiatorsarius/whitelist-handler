@@ -3,7 +3,7 @@ plugins {
     id 'application'
 }
 
-group = 'combat.log.discord'
+group = 'whitelist.handler.discord'
 version = '1.0.0'
 
 repositories {
@@ -20,19 +20,20 @@ dependencies {
 }
 
 application {
-    mainClass = 'combat.log.discord.WhitelistBotMain'
+    mainClass = 'whitelist.handler.discord.WhitelistBotMain'
 }
-
-tasks.register('shadowJar', Jar) {
-    archiveClassifier.set('all')
-    manifest { attributes 'Main-Class': application.mainClass }
-    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
-    from { configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) } }
-}
-
 java {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
+}
+
+sourceSets {
+    main {
+        java {
+            // Exclude the legacy/combat source tree so we build only the whitelist package
+            exclude 'combat/**'
+        }
+    }
 }
 
 tasks.withType(JavaCompile).configureEach { options.encoding = 'UTF-8' }

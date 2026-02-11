@@ -1,18 +1,14 @@
-package combat.log.discord.websocket;
+package whitelist.handler.discord.websocket;
 
-import combat.log.discord.config.BotConfig;
-import combat.log.discord.database.LinkingDatabase;
-import combat.log.discord.discord.TicketManager;
-import combat.log.discord.models.CombatLogIncident;
-import combat.log.discord.models.IncidentDecision;
-import combat.log.discord.models.SocketMessage;
-import combat.log.discord.models.UnlinkMessage;
-import combat.log.discord.models.VanillaWhitelistAddMessage;
-import combat.log.discord.models.WhitelistConfirmation;
-import combat.log.discord.models.WhitelistRemoveConfirmation;
-import combat.log.discord.whitelist.WhitelistManager;
-import combat.log.discord.models.LinkCreatedMessage;
-import combat.log.discord.models.LinkLookupResponse;
+import whitelist.handler.discord.config.BotConfig;
+import whitelist.handler.discord.models.SocketMessage;
+import whitelist.handler.discord.models.UnlinkMessage;
+import whitelist.handler.discord.models.VanillaWhitelistAddMessage;
+import whitelist.handler.discord.models.WhitelistConfirmation;
+import whitelist.handler.discord.models.WhitelistRemoveConfirmation;
+import whitelist.handler.discord.whitelist.WhitelistManager;
+import whitelist.handler.discord.models.LinkCreatedMessage;
+import whitelist.handler.discord.models.LinkLookupResponse;
 import com.google.gson.Gson;
 import org.java_websocket.WebSocket;
 import org.java_websocket.handshake.ClientHandshake;
@@ -23,22 +19,18 @@ import org.slf4j.LoggerFactory;
 import java.net.InetSocketAddress;
 
 /**
- * WebSocket server that receives combat log incidents from Minecraft (whitelist-handler bot copy).
+ * WebSocket server that handles whitelist operations with Minecraft server.
  */
-public class CombatLogWebSocketServer extends WebSocketServer {
-    private static final Logger logger = LoggerFactory.getLogger(CombatLogWebSocketServer.class);
+public class WhitelistWebSocketServer extends WebSocketServer {
+    private static final Logger logger = LoggerFactory.getLogger(WhitelistWebSocketServer.class);
     private final Gson gson = new Gson();
-    private final TicketManager ticketManager;
     private final BotConfig config;
-    private final LinkingDatabase linkingDatabase;
     private WhitelistManager whitelistManager;
     private WebSocket minecraftConnection;
 
-    public CombatLogWebSocketServer(BotConfig config, TicketManager ticketManager, LinkingDatabase linkingDatabase) {
+    public WhitelistWebSocketServer(BotConfig config) {
         super(new InetSocketAddress(config.websocket.host, config.websocket.port));
         this.config = config;
-        this.ticketManager = ticketManager;
-        this.linkingDatabase = linkingDatabase;
     }
 
     public void setWhitelistManager(WhitelistManager whitelistManager) {
@@ -82,10 +74,7 @@ public class CombatLogWebSocketServer extends WebSocketServer {
         try {
             SocketMessage baseMessage = gson.fromJson(message, SocketMessage.class);
 
-            if ("combat_log_incident".equals(baseMessage.getType())) {
-                CombatLogIncident incident = gson.fromJson(message, CombatLogIncident.class);
-                handleIncident(incident);
-            } else if ("whitelist_confirmation".equals(baseMessage.getType())) {
+            if ("whitelist_confirmation".equals(baseMessage.getType())) {
                 WhitelistConfirmation confirmation = gson.fromJson(message, WhitelistConfirmation.class);
                 handleWhitelistConfirmation(confirmation);
             } else if ("whitelist_remove_confirmation".equals(baseMessage.getType())) {
@@ -121,25 +110,11 @@ public class CombatLogWebSocketServer extends WebSocketServer {
         logger.info("WebSocket server started on {}:{}", config.websocket.host, config.websocket.port);
     }
 
-    private void handleIncident(CombatLogIncident incident) {
-        logger.info("Processing incident {} for player {}", incident.getIncidentId(), incident.getPlayerName());
-        ticketManager.createTicket(incident);
-    }
-
     private void handleUnlink(UnlinkMessage message) {
         logger.info("Processing unlink request for player {} ({})", message.getPlayerName(), message.getPlayerUuid());
 
-        String discordId = linkingDatabase.getDiscordId(message.getPlayerUuid()).orElse(null);
-
         if (whitelistManager != null) {
-            whitelistManager.handleMinecraftUnlink(message, discordId);
-        }
-
-        try {
-            linkingDatabase.removeLink(message.getPlayerUuid());
-            logger.info("Removed link for player {} from database", message.getPlayerName());
-        } catch (Exception e) {
-            logger.error("Failed to remove link for player {}: {}", message.getPlayerName(), e.getMessage(), e);
+            whitelistManager.handleMinecraftUnlink(message, null); // Discord ID will be looked up by whitelist manager via WebSocket
         }
     }
 
@@ -163,16 +138,6 @@ public class CombatLogWebSocketServer extends WebSocketServer {
         logger.info("Received vanilla whitelist add for {} ({})", message.getPlayerName(), message.getPlayerUuid());
         if (whitelistManager != null) {
             whitelistManager.handleVanillaWhitelistAdd(message);
-        }
-    }
-
-    public void sendDecision(IncidentDecision decision) {
-        if (minecraftConnection != null && minecraftConnection.isOpen()) {
-            String json = gson.toJson(decision);
-            minecraftConnection.send(json);
-            logger.info("Sent decision for incident {} to Minecraft", decision.getIncidentId());
-        } else {
-            logger.warn("Cannot send decision - Minecraft not connected");
         }
     }
 
