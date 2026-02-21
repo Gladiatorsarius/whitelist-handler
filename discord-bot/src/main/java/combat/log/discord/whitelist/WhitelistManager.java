@@ -42,6 +42,16 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.Executors;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.Files;
+import java.nio.file.StandardOpenOption;
+import java.nio.charset.StandardCharsets;
+import java.io.IOException;
+import java.util.List;
+import java.util.ArrayList;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -62,6 +72,10 @@ public class WhitelistManager {
     private final ConcurrentLinkedQueue<String> pendingWhitelistMessages = new ConcurrentLinkedQueue<>();
     private volatile String whitelistStatusMessageId;
 
+    private static final String WHITELIST_STATUS_TITLE = "📜 Whitelisted Players";
+    private final ScheduledExecutorService lookupScheduler = Executors.newSingleThreadScheduledExecutor();
+    private final Path pendingQueuePath = Paths.get("data", "pending-whitelist.log");
+
     private static final Pattern DISCORD_ID_PATTERN = Pattern.compile("(\\d{6,})");
 
     public WhitelistManager(JDA jda, BotConfig config, MojangAPIService mojangAPI) {
@@ -79,11 +93,29 @@ public class WhitelistManager {
         LinkLookupMessage msg = new LinkLookupMessage(requestId, query, value);
         CompletableFuture<LinkLookupResponse> future = new CompletableFuture<>();
         pendingLinkLookups.put(requestId, future);
+
         if (webSocketServer != null) {
-            webSocketServer.broadcast(gson.toJson(msg));
+            try {
+                webSocketServer.broadcast(gson.toJson(msg));
+            } catch (Exception e) {
+                pendingLinkLookups.remove(requestId);
+                future.completeExceptionally(e);
+                return future;
+            }
+
+            // Schedule a timeout to remove the future if no response arrives
+            lookupScheduler.schedule(() -> {
+                CompletableFuture<LinkLookupResponse> removed = pendingLinkLookups.remove(requestId);
+                if (removed != null && !removed.isDone()) {
+                    removed.completeExceptionally(new RuntimeException("Link lookup timed out"));
+                }
+            }, 6, TimeUnit.SECONDS);
         } else {
+            // Clean up mapping to avoid leaks
+            pendingLinkLookups.remove(requestId);
             future.completeExceptionally(new RuntimeException("WebSocket not connected"));
         }
+
         return future;
     }
 
@@ -111,7 +143,7 @@ public class WhitelistManager {
 
     private EmbedBuilder buildWhitelistStatusEmbed() {
         EmbedBuilder embed = new EmbedBuilder();
-        embed.setTitle("📜 Whitelist Status");
+        embed.setTitle(WHITELIST_STATUS_TITLE);
         embed.setColor(Color.BLUE);
         embed.setDescription("Whitelist information is managed server-side.\nUse `/whitelist check` to verify individual players.");
         embed.setFooter("Server authoritative - All whitelist data stored on Minecraft server");
@@ -139,7 +171,7 @@ public class WhitelistManager {
                         continue;
                     }
                     String title = message.getEmbeds().get(0).getTitle();
-                    if ("📜 Whitelisted Players".equals(title)) {
+                    if (WHITELIST_STATUS_TITLE.equals(title)) {
                         whitelistStatusMessageId = message.getId();
                         logChannel.editMessageEmbedsById(whitelistStatusMessageId, buildWhitelistStatusEmbed().build())
                             .queue(null, error -> whitelistStatusMessageId = null);
@@ -387,25 +419,23 @@ public class WhitelistManager {
                 resolveLabel(config.buttons.whitelist.deny, "❌ Deny")
             );
 
-            // Create thread
+            // Create thread (non-blocking)
             String threadName = "Whitelist: " + request.getMinecraftName();
-            ThreadChannel thread = reviewChannel.createThreadChannel(threadName).complete();
-            
-            // Post message with buttons
-            thread.sendMessageEmbeds(embed.build())
-                .setActionRow(approveButton, denyButton)
-                .complete();
+            reviewChannel.createThreadChannel(threadName).queue(thread -> {
+                // Post message with buttons
+                thread.sendMessageEmbeds(embed.build())
+                    .setActionRow(approveButton, denyButton)
+                    .queue(sent -> {
+                        // Tag staff role if configured
+                        if (config.discord.staffRoleId != null) {
+                            thread.sendMessage("<@&" + config.discord.staffRoleId + ">").queue();
+                        }
 
-            // Tag staff role if configured
-            if (config.discord.staffRoleId != null) {
-                thread.sendMessage("<@&" + config.discord.staffRoleId + ">").queue();
-            }
-
-            // Store request in pending requests map
-            request.setThreadId(thread.getId());
-            // Note: Database storage removed - using in-memory pendingRequests map only
-
-            logger.info("Created review thread for request: {}", request.getRequestId());
+                        // Store request in pending requests map
+                        request.setThreadId(thread.getId());
+                        logger.info("Created review thread for request: {}", request.getRequestId());
+                    }, error -> logger.error("Failed to post review message in thread {}", thread.getId(), error));
+            }, error -> logger.error("Failed to create review thread in channel {}", reviewChannel.getId(), error));
         } catch (Exception e) {
             logger.error("Failed to create review thread", e);
         }
@@ -707,6 +737,19 @@ public class WhitelistManager {
             return;
         }
 
+        // Persist to disk first
+        try {
+            Files.createDirectories(pendingQueuePath.getParent());
+            Files.write(pendingQueuePath, (json + System.lineSeparator()).getBytes(StandardCharsets.UTF_8),
+                StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            logger.info("Persisted pending whitelist message to {}", pendingQueuePath.toAbsolutePath());
+        } catch (IOException e) {
+            logger.error("Failed to persist pending whitelist message, falling back to memory queue", e);
+            pendingWhitelistMessages.offer(json);
+            return;
+        }
+
+        // Also keep in-memory as a fast-access queue
         pendingWhitelistMessages.offer(json);
     }
 
@@ -715,9 +758,27 @@ public class WhitelistManager {
             return;
         }
 
+        // First flush in-memory queue
         String message;
         while ((message = pendingWhitelistMessages.poll()) != null) {
             webSocketServer.broadcast(message);
+        }
+
+        // Then flush persisted queue atomically
+        if (Files.exists(pendingQueuePath)) {
+            List<String> lines = new ArrayList<>();
+            try {
+                lines = Files.readAllLines(pendingQueuePath, StandardCharsets.UTF_8);
+                for (String l : lines) {
+                    if (l != null && !l.isBlank()) {
+                        webSocketServer.broadcast(l);
+                    }
+                }
+                // Delete the file after successful flush
+                Files.deleteIfExists(pendingQueuePath);
+            } catch (IOException e) {
+                logger.error("Failed to flush persisted pending whitelist messages", e);
+            }
         }
     }
 

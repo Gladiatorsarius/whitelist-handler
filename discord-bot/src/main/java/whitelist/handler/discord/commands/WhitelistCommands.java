@@ -20,13 +20,19 @@ public class WhitelistCommands extends ListenerAdapter {
 
     @Override
     public void onSlashCommandInteraction(SlashCommandInteractionEvent event) {
-        if ("whitelist-setup".equals(event.getName())) {
-            handleWhitelistSetup(event);
+        if ("whitelist".equals(event.getName())) {
+            String sub = event.getSubcommandName();
+            if (sub == null) {
+                replyEphemeral(event, "Subcommand required.");
+                return;
+            }
+            switch (sub) {
+                case "tickets" -> handleWhitelistSetup(event);
+                case "log" -> handleWhitelistLogSetup(event);
+                case "unlink" -> handleUnlink(event);
+                default -> replyEphemeral(event, "Unknown subcommand: " + sub);
+            }
             return;
-        }
-
-        if ("unlink".equals(event.getName())) {
-            handleUnlink(event);
         }
     }
 
@@ -51,14 +57,47 @@ public class WhitelistCommands extends ListenerAdapter {
     }
 
     private void handleWhitelistSetup(SlashCommandInteractionEvent event) {
-        OptionMapping channelOption = event.getOption("channel_id");
-        if (channelOption == null) {
+        OptionMapping channelOption = event.getOption("channel");
+        if (channelOption == null || channelOption.getAsChannel() == null) {
             replyEphemeral(event, whitelistManager.message("whitelist.setup.channelRequired", "❌ Channel ID is required"));
             return;
         }
 
-        String channelId = channelOption.getAsString();
-        // ...existing code...
+        String channelId = channelOption.getAsChannel().getId();
+        // existing setup logic saves/creates the whitelist button message
+        boolean ok = whitelistManager.setupWhitelistChannel(channelId);
+        if (ok) {
+            replyEphemeral(event, whitelistManager.message("whitelist.setup.success", "✅ Whitelist channel setup complete!"));
+        } else {
+            replyEphemeral(event, "❌ Failed to setup whitelist channel: bot cannot send messages to that channel or an error occurred. Check bot permissions and try again.");
+        }
+    }
+
+    private void handleWhitelistLogSetup(SlashCommandInteractionEvent event) {
+        if (!whitelistManager.hasStaffPermission(event.getMember())) {
+            replyEphemeral(event, whitelistManager.message("whitelist.unlink.noPermission", "❌ You don't have permission to use this command."));
+            return;
+        }
+
+        OptionMapping channelOption = event.getOption("channel");
+        if (channelOption == null || channelOption.getAsChannel() == null) {
+            replyEphemeral(event, whitelistManager.message("whitelist.setup.channelRequired", "❌ Channel ID is required"));
+            return;
+        }
+
+        String channelId = channelOption.getAsChannel().getId();
+        boolean ok = whitelistManager.setupWhitelistLogChannel(channelId);
+        if (ok) {
+            replyEphemeral(event, "✅ Whitelist log channel set to <#" + channelId +">.");
+            // Post current whitelist to the channel immediately
+            try {
+                whitelistManager.postWhitelistListNow();
+            } catch (Exception ignore) {
+                logger.warn("Failed to post whitelist list immediately", ignore);
+            }
+        } else {
+            replyEphemeral(event, "❌ Failed to set whitelist log channel. See bot logs.");
+        }
     }
 
     private void replyEphemeral(SlashCommandInteractionEvent event, String message) {

@@ -1,58 +1,52 @@
 # whitelist-handler
+# whitelist-handler
 
-This repository contains the separated whitelist functionality used by Swordsmp mods. It provides a Discord bot that collects whitelist requests and a server-side Minecraft mod that stores and enforces player links.
+Repository overview
+
+This folder contains the separated whitelist functionality used by Swordsmp: a Discord bot and a Fabric Minecraft mod that together manage authoritative Discord↔Minecraft links.
 
 Contents
-- `discord-bot/` — Java-based Discord bot that provides the UI and workflow for whitelist requests and approval.
-- `whitelist-mod/` — Minecraft Fabric mod that stores authoritative player links and exposes a WebSocket endpoint for bots to request link creation and lookups.
-- `docs/` — Protocol documentation, including message schemas (`websocket-api.md`).
+- `discord-bot/` — Java Discord bot: UI, slash commands and staff flows for whitelist requests; runs a WebSocket server to talk to the Minecraft mod.
+- `whitelist-mod/` — Fabric mod: authoritative store for player links, a WebSocket client/server endpoint for bot integration, and in-game commands for admins.
+- `docs/` — Protocol documentation (message schemas and examples).
 
-Quick overview
-- The authoritative data store for player links is on the Minecraft server (persisted by `whitelist-mod`).
-- The Discord bot sends `link_create_request` and `link_lookup` messages to the server over WebSocket. The server responds with `link_created` and `link_lookup_response`.
-- The bot's local DB (if present) is used as a cache/archive only — the server is authoritative.
+Principles
+- The authoritative store for links is the Minecraft server (the mod persists links).
+- The bot and mod communicate over a small JSON WebSocket protocol; the bot requests lookups and creation, the mod responds with authoritative events.
 
-Getting started
-1. Configure the Minecraft server mod first. See [whitelist-mod](whitelist-mod/README.md) for build and install steps.
-2. Configure the Discord bot by editing `discord-bot/config.json` (see the example below).
-3. Build and run the bot from the `discord-bot/` folder using Gradle (there are tasks and scripts included).
+New/important features
+- `/test` (Discord slash): triggers the bot-side end-to-end test flow (create → lookup → unlink). Results are posted to the configured whitelist log channel.
+- Mod in-game commands:
+  - `/discord test` — ask the bot to run its remote test (server-initiated). Results appear in the bot's whitelist log channel.
+  - `/discord unlink` — unlink a player from Discord (player or admin usage depending on arguments).
+- Persistent outbound queue: outgoing messages use a file-backed pending queue at `discord-bot/data/pending-whitelist.log` to survive restarts.
 
-Discord bot configuration (summary)
-- `discord-bot/config.json` — Primary runtime configuration for the bot. See `discord-bot/config.example.json` for a minimal example.
-- Required values: `discord.botToken`, `websocket.serverUrl`, `socketAuth.token` (shared secret between bot and server).
+Quick start
+1. Install and configure the `whitelist-mod` on your Minecraft server first — it is authoritative. See [whitelist-mod/README.md](whitelist-mod/README.md).
+2. Configure the Discord bot at `discord-bot/config.json` (copy `config.example.json` and fill values).
+   - At minimum set `discord.token` (bot token), `websocket.port/host`, and `channels.whitelistLogChannelId`.
+3. Build the bot from the `discord-bot/` folder using the Gradle wrapper:
 
-Example `discord-bot/config.json`
-The repository contains `discord-bot/config.example.json`. A fuller example is provided in the repo and included with the bot distribution. Replace the placeholder values before starting the bot.
+```powershell
+Set-Location whitelist-handler/discord-bot
+.\gradlew.bat build
+```
 
-Build & run
-- To build the bot (from repository root):
+4. Run the bot from the produced JAR (recommended for production):
 
-	- On Windows (PowerShell):
+```powershell
+java -jar build/libs/discord-bot-<version>-all.jar
+```
 
-		Set-Location whitelist-handler/discord-bot; .\gradlew.bat shadowJar
+Notes
+- Slash command registration can take up to a minute (global) or be immediate for guild-scoped registration.
+- This deployment does not use a shared secret by default — the WebSocket endpoint accepts connections without an `Authorization` header.
 
-	- Or use the provided wrapper scripts inside `discord-bot/`.
+Troubleshooting & tips
 
-- The resulting artifact is placed under `discord-bot/build/libs/` (a fat/shadow jar). Run it with:
+See also
+- Protocol: [docs/websocket-api.md](docs/websocket-api.md)
+- Bot README: [discord-bot/README.md](discord-bot/README.md)
+- Mod README: [whitelist-mod/README.md](whitelist-mod/README.md)
 
-	java -jar build/libs/discord-bot-1.0.0-all.jar
-
-WebSocket API
-- See [docs/websocket-api.md](docs/websocket-api.md) for message schemas, request/response flow and required auth headers.
-
-Configuration notes
-- Keep the `socketAuth.token` secret — it authenticates bot requests to the server.
-- Use `websocket.serverUrl` to point to your running Minecraft server WebSocket endpoint (for example `wss://example.com/ws` or `ws://localhost:8080/ws`).
-
-Troubleshooting
-- If the bot fails to connect to the server, verify the WebSocket URL and shared token. Check the server logs for handshake/auth failures.
-- Use the `logs/` folder in `discord-bot/` (if present) to inspect runtime logs.
-
-Further reading
-- Protocol details: [docs/websocket-api.md](docs/websocket-api.md)
-- Server implementation: [whitelist-mod/](whitelist-mod/)
-
-License
-- See the top-level LICENSE files in the subprojects for licensing details.
-
-If you want, I can also validate the bot startup locally or update `discord-bot/README.md` with build instructions.
+If you want, I can also run the bot locally and perform an end-to-end test with the mod.

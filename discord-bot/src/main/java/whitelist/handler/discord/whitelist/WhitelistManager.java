@@ -44,6 +44,17 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.Executors;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.Files;
+import java.nio.file.StandardOpenOption;
+import java.nio.charset.StandardCharsets;
+import java.io.IOException;
+import java.io.File;
+import java.util.List;
+import java.util.ArrayList;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -57,19 +68,29 @@ public class WhitelistManager {
     private final BotConfig config;
     private final MojangAPIService mojangAPI;
     private WhitelistWebSocketServer webSocketServer;
+    private final File configFile;
     private final Gson gson = new Gson();
     private final ConcurrentMap<String, CompletableFuture<LinkLookupResponse>> pendingLinkLookups = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, CompletableFuture<LinkCreatedMessage>> pendingCreateFutures = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, PendingWhitelistRequest> pendingRequests = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, PendingUnlinkRequest> pendingUnlinkRequests = new ConcurrentHashMap<>();
     private final ConcurrentLinkedQueue<String> pendingWhitelistMessages = new ConcurrentLinkedQueue<>();
     private volatile String whitelistStatusMessageId;
-
+    private static final String WHITELIST_STATUS_TITLE = "📜 Whitelisted Players";
+    private final ScheduledExecutorService lookupScheduler = Executors.newSingleThreadScheduledExecutor();
+    private final Path pendingQueuePath = Paths.get("data", "pending-whitelist.log");
     private static final Pattern DISCORD_ID_PATTERN = Pattern.compile("(\\d{6,})");
 
-    public WhitelistManager(JDA jda, BotConfig config, MojangAPIService mojangAPI) {
+    public WhitelistManager(JDA jda, BotConfig config, MojangAPIService mojangAPI, File configFile) {
         this.jda = jda;
         this.config = config;
         this.mojangAPI = mojangAPI;
+        this.configFile = configFile;
+    }
+
+    // Backwards-compatible constructor used by older tests/code that passed three args
+    public WhitelistManager(JDA jda, BotConfig config, MojangAPIService mojangAPI) {
+        this(jda, config, mojangAPI, null);
     }
 
     public void setWebSocketServer(WhitelistWebSocketServer webSocketServer) {
@@ -81,11 +102,29 @@ public class WhitelistManager {
         LinkLookupMessage msg = new LinkLookupMessage(requestId, query, value);
         CompletableFuture<LinkLookupResponse> future = new CompletableFuture<>();
         pendingLinkLookups.put(requestId, future);
+
         if (webSocketServer != null) {
-            webSocketServer.broadcast(gson.toJson(msg));
+            try {
+                webSocketServer.broadcast(gson.toJson(msg));
+            } catch (Exception e) {
+                pendingLinkLookups.remove(requestId);
+                future.completeExceptionally(e);
+                return future;
+            }
+
+            // Schedule a timeout to remove the future if no response arrives
+            lookupScheduler.schedule(() -> {
+                CompletableFuture<LinkLookupResponse> removed = pendingLinkLookups.remove(requestId);
+                if (removed != null && !removed.isDone()) {
+                    removed.completeExceptionally(new RuntimeException("Link lookup timed out"));
+                }
+            }, 6, TimeUnit.SECONDS);
         } else {
+            // Clean up mapping to avoid leaks
+            pendingLinkLookups.remove(requestId);
             future.completeExceptionally(new RuntimeException("WebSocket not connected"));
         }
+
         return future;
     }
 
@@ -113,7 +152,7 @@ public class WhitelistManager {
 
     private EmbedBuilder buildWhitelistStatusEmbed() {
         EmbedBuilder embed = new EmbedBuilder();
-        embed.setTitle("📜 Whitelist Status");
+        embed.setTitle(WHITELIST_STATUS_TITLE);
         embed.setColor(Color.BLUE);
         embed.setDescription("Whitelist information is managed server-side.\nUse `/whitelist check` to verify individual players.");
         embed.setFooter("Server authoritative - All whitelist data stored on Minecraft server");
@@ -121,43 +160,105 @@ public class WhitelistManager {
         return embed;
     }
 
-    private void ensureWhitelistStatusMessageExists() {
-        updateWhitelistStatusMessage();
-    }
-
-    private void updateWhitelistStatusMessage() {
-        TextChannel logChannel = resolveWhitelistLogChannel();
-        if (logChannel == null || !logChannel.canTalk()) {
+    /**
+     * Immediately post the current whitelist list to the configured log channel.
+     * Preference: read from local DB at data/linking.db if present, otherwise request via WebSocket.
+     */
+    public void postWhitelistListNow() {
+        TextChannel ch = resolveWhitelistLogChannel();
+        if (ch == null || !ch.canTalk()) {
+            logger.warn("Cannot post whitelist list - channel not configured or bot cannot talk");
             return;
         }
 
-        if (whitelistStatusMessageId == null || whitelistStatusMessageId.isBlank()) {
-            logChannel.getHistory().retrievePast(50).queue(messages -> {
-                for (Message message : messages) {
-                    if (!message.getAuthor().isBot()) {
-                        continue;
-                    }
-                    if (message.getEmbeds().isEmpty()) {
-                        continue;
-                    }
-                    String title = message.getEmbeds().get(0).getTitle();
-                    if ("📜 Whitelisted Players".equals(title)) {
-                        whitelistStatusMessageId = message.getId();
-                        logChannel.editMessageEmbedsById(whitelistStatusMessageId, buildWhitelistStatusEmbed().build())
-                            .queue(null, error -> whitelistStatusMessageId = null);
-                        return;
-                    }
+        // Try local DB first (direct JDBC query to avoid compile-time dependency)
+        java.io.File dbFile = new java.io.File("data" + java.io.File.separator + "linking.db");
+        if (dbFile.exists()) {
+            String jdbcUrl = "jdbc:sqlite:" + dbFile.getAbsolutePath();
+            String sql = "SELECT minecraft_name, discord_id FROM whitelist_links WHERE whitelisted = 1 ORDER BY linked_at";
+            try (java.sql.Connection conn = java.sql.DriverManager.getConnection(jdbcUrl);
+                 java.sql.PreparedStatement stmt = conn.prepareStatement(sql);
+                 java.sql.ResultSet rs = stmt.executeQuery()) {
+
+                StringBuilder sb = new StringBuilder();
+                boolean any = false;
+                while (rs.next()) {
+                    any = true;
+                    String minecraftName = rs.getString("minecraft_name");
+                    String discordId = rs.getString("discord_id");
+                    String discordPart = (discordId != null && !discordId.isBlank()) ? "<@" + discordId + ">" : "(no discord)";
+                    sb.append("• ").append(minecraftName).append(" — ").append(discordPart).append('\n');
                 }
 
-                logChannel.sendMessageEmbeds(buildWhitelistStatusEmbed().build())
-                    .queue(message -> whitelistStatusMessageId = message.getId());
-            }, error -> logChannel.sendMessageEmbeds(buildWhitelistStatusEmbed().build())
-                .queue(message -> whitelistStatusMessageId = message.getId()));
+                EmbedBuilder embed = new EmbedBuilder()
+                    .setTitle(WHITELIST_STATUS_TITLE)
+                    .setColor(java.awt.Color.BLUE)
+                    .setTimestamp(Instant.now());
+                if (!any) {
+                    embed.setDescription("No whitelisted entries found.");
+                } else {
+                    embed.setDescription(sb.toString());
+                }
+                ch.sendMessageEmbeds(embed.build()).queue();
+                return;
+            } catch (Exception ex) {
+                logger.error("Failed to read local linking DB via JDBC", ex);
+            }
+        }
+
+        // If no DB, try asking Minecraft via websocket
+        if (webSocketServer != null && webSocketServer.isMinecraftConnected()) {
+            try {
+                // send a simple request message
+                whitelist.handler.discord.models.SocketMessage req = new whitelist.handler.discord.models.SocketMessage();
+                req.setType("request_whitelist_list");
+                webSocketServer.broadcast(new Gson().toJson(req));
+                ch.sendMessage("Requested whitelist from server; will post the list when received.").queue();
+                return;
+            } catch (Exception ex) {
+                logger.error("Failed to request whitelist list via websocket", ex);
+            }
+        }
+
+        // Nothing available — still post an informative embed so channel shows a status
+        EmbedBuilder noEmbed = new EmbedBuilder()
+            .setTitle(WHITELIST_STATUS_TITLE)
+            .setDescription("No local database available and the Minecraft server is not connected; cannot retrieve whitelist.")
+            .setColor(java.awt.Color.GRAY)
+            .setTimestamp(Instant.now());
+        ch.sendMessageEmbeds(noEmbed.build()).queue();
+    }
+
+    /**
+     * Handle a whitelist list response arriving from the Minecraft server via websocket.
+     */
+    public void handleWhitelistListResponse(whitelist.handler.discord.models.WhitelistListResponse resp) {
+        TextChannel ch = resolveWhitelistLogChannel();
+        if (ch == null || !ch.canTalk()) return;
+
+        if (resp == null || resp.getEntries() == null || resp.getEntries().isEmpty()) {
+            EmbedBuilder embed = new EmbedBuilder()
+                .setTitle(WHITELIST_STATUS_TITLE)
+                .setDescription("No whitelisted entries returned from server.")
+                .setColor(java.awt.Color.GRAY)
+                .setTimestamp(Instant.now());
+            ch.sendMessageEmbeds(embed.build()).queue();
             return;
         }
 
-        logChannel.editMessageEmbedsById(whitelistStatusMessageId, buildWhitelistStatusEmbed().build())
-            .queue(null, error -> whitelistStatusMessageId = null);
+        StringBuilder sb = new StringBuilder();
+        for (whitelist.handler.discord.models.WhitelistListResponse.Entry e : resp.getEntries()) {
+            String discordPart = (e.getDiscordId() != null && !e.getDiscordId().isBlank()) ? "<@" + e.getDiscordId() + ">" : "(no discord)";
+            sb.append("• ").append(e.getMinecraftName()).append(" — ").append(discordPart).append('\n');
+        }
+
+        EmbedBuilder embed = new EmbedBuilder()
+            .setTitle(WHITELIST_STATUS_TITLE)
+            .setDescription(sb.toString())
+            .setColor(java.awt.Color.BLUE)
+            .setTimestamp(Instant.now());
+
+        ch.sendMessageEmbeds(embed.build()).queue();
     }
 
     /**
@@ -312,6 +413,11 @@ public class WhitelistManager {
      */
     public void handleLinkCreated(LinkCreatedMessage created) {
         String requestId = created.getRequestId();
+        // If a test create future is waiting for this requestId, complete it first
+        CompletableFuture<LinkCreatedMessage> createFuture = pendingCreateFutures.remove(requestId);
+        if (createFuture != null) {
+            createFuture.complete(created);
+        }
         PendingWhitelistRequest pending = pendingRequests.remove(requestId);
 
         // Link created on server - no local caching needed since server is authoritative
@@ -327,6 +433,83 @@ public class WhitelistManager {
                 pending.hook.editOriginal(message).queue();
             }
             updateWhitelistStatusMessage();
+        }
+    }
+
+    /**
+     * Run a remote end-to-end test: request create -> lookup -> unlink and post result to log channel.
+     * Runs asynchronously on the lookupScheduler to avoid blocking event threads.
+     */
+    public void runRemoteTest(Member requestedBy) {
+        lookupScheduler.execute(() -> {
+            String requestId = UUID.randomUUID().toString();
+            try {
+                // Create test identifiers
+                String testDiscordId = "TEST_DISCORD_" + UUID.randomUUID().toString().substring(0,8);
+                String testUuid = UUID.randomUUID().toString();
+                String testName = "testplayer_" + UUID.randomUUID().toString().substring(0,6);
+
+                LinkCreateRequest createReq = new LinkCreateRequest(requestId, testDiscordId, testUuid, testName, "BOT_TEST", true);
+                String json = gson.toJson(createReq);
+
+                CompletableFuture<LinkCreatedMessage> createFuture = new CompletableFuture<>();
+                pendingCreateFutures.put(requestId, createFuture);
+
+                if (webSocketServer == null) {
+                    postTestResultToLogChannel(false, "WebSocket server not available");
+                    pendingCreateFutures.remove(requestId);
+                    return;
+                }
+
+                webSocketServer.broadcast(json);
+
+                LinkCreatedMessage created = null;
+                try {
+                    created = createFuture.get(8, TimeUnit.SECONDS);
+                } catch (Exception ex) {
+                    postTestResultToLogChannel(false, "Timed out waiting for LinkCreated: " + ex.getMessage());
+                    pendingCreateFutures.remove(requestId);
+                    return;
+                }
+
+                // Lookup the created link by UUID
+                try {
+                    LinkLookupResponse lookupResp = lookupLink("minecraft_uuid", created.getPlayerUuid()).get(6, TimeUnit.SECONDS);
+                    if (!lookupResp.isFound()) {
+                        postTestResultToLogChannel(false, "Lookup did not find the created link");
+                        return;
+                    }
+                } catch (Exception ex) {
+                    postTestResultToLogChannel(false, "Lookup failed: " + ex.getMessage());
+                    return;
+                }
+
+                // Send unlink to remove test link
+                try {
+                    UnlinkMessage unlink = new UnlinkMessage(created.getPlayerUuid(), created.getPlayerName(), "test");
+                    webSocketServer.broadcast(gson.toJson(unlink));
+                } catch (Exception ex) {
+                    postTestResultToLogChannel(false, "Failed to send unlink: " + ex.getMessage());
+                    return;
+                }
+
+                postTestResultToLogChannel(true, "Test completed successfully (created, lookup OK, removed)");
+            } catch (Exception e) {
+                logger.error("Unexpected error during runRemoteTest", e);
+                postTestResultToLogChannel(false, "Unexpected error: " + e.getMessage());
+            } finally {
+                pendingCreateFutures.remove(requestId);
+            }
+        });
+    }
+
+    public void postTestResultToLogChannel(boolean success, String message) {
+        TextChannel ch = resolveWhitelistLogChannel();
+        if (ch != null) {
+            String out = (success ? "✅ " : "❌ ") + message;
+            ch.sendMessage(out).queue(null, err -> logger.error("Failed to post test result to log channel", err));
+        } else {
+            logger.info("Test result: {} - {}", success, message);
         }
     }
 
@@ -389,25 +572,23 @@ public class WhitelistManager {
                 resolveLabel(config.buttons.whitelist.deny, "❌ Deny")
             );
 
-            // Create thread
+            // Create thread (non-blocking)
             String threadName = "Whitelist: " + request.getMinecraftName();
-            ThreadChannel thread = reviewChannel.createThreadChannel(threadName).complete();
-            
-            // Post message with buttons
-            thread.sendMessageEmbeds(embed.build())
-                .setActionRow(approveButton, denyButton)
-                .complete();
+            reviewChannel.createThreadChannel(threadName).queue(thread -> {
+                // Post message with buttons
+                thread.sendMessageEmbeds(embed.build())
+                    .setActionRow(approveButton, denyButton)
+                    .queue(sent -> {
+                        // Tag staff role if configured
+                        if (config.discord.staffRoleId != null) {
+                            thread.sendMessage("<@&" + config.discord.staffRoleId + ">").queue();
+                        }
 
-            // Tag staff role if configured
-            if (config.discord.staffRoleId != null) {
-                thread.sendMessage("<@&" + config.discord.staffRoleId + ">").queue();
-            }
-
-            // Store request in pending requests map
-            request.setThreadId(thread.getId());
-            // Note: Database storage removed - using in-memory pendingRequests map only
-
-            logger.info("Created review thread for request: {}", request.getRequestId());
+                        // Store request in pending requests map
+                        request.setThreadId(thread.getId());
+                        logger.info("Created review thread for request: {}", request.getRequestId());
+                    }, error -> logger.error("Failed to post review message in thread {}", thread.getId(), error));
+            }, error -> logger.error("Failed to create review thread in channel {}", reviewChannel.getId(), error));
         } catch (Exception e) {
             logger.error("Failed to create review thread", e);
         }
@@ -536,12 +717,12 @@ public class WhitelistManager {
     /**
      * Setup whitelist channel with button
      */
-    public void setupWhitelistChannel(String channelId) {
+    public boolean setupWhitelistChannel(String channelId) {
         try {
             TextChannel channel = jda.getTextChannelById(channelId);
             if (channel == null) {
                 logger.error("Channel not found: {}", channelId);
-                return;
+                return false;
             }
 
             EmbedBuilder embed = new EmbedBuilder()
@@ -560,14 +741,53 @@ public class WhitelistManager {
                 resolveLabel(config.buttons.whitelist.unlink, "🔓 Unlink")
             );
 
+            if (!channel.canTalk()) {
+                logger.warn("Bot cannot send messages to channel {} (missing permission)", channelId);
+                return false;
+            }
+
             channel.sendMessageEmbeds(embed.build())
                 .setActionRow(requestButton, unlinkButton)
                 .queue();
 
             logger.info("Setup whitelist channel: {}", channelId);
+            return true;
 
         } catch (Exception e) {
             logger.error("Failed to setup whitelist channel", e);
+            return false;
+        }
+    }
+
+    /**
+     * Setup the whitelist log channel (where whitelist events are posted).
+     * Persists the choice to the config file.
+     * @return true if successful
+     */
+    public boolean setupWhitelistLogChannel(String channelId) {
+        try {
+            TextChannel channel = jda.getTextChannelById(channelId);
+            if (channel == null) {
+                logger.error("Log channel not found: {}", channelId);
+                return false;
+            }
+
+            // Save into runtime config and persist
+            config.channels.whitelistLogChannelId = channelId;
+            if (configFile != null) {
+                BotConfig.save(configFile, config);
+            }
+
+            // Notify in the channel
+            try {
+                channel.sendMessage("This channel has been configured as the whitelist log channel.").queue();
+            } catch (Exception ignored) {}
+
+            logger.info("Configured whitelist log channel: {}", channelId);
+            return true;
+        } catch (Exception e) {
+            logger.error("Failed to setup whitelist log channel", e);
+            return false;
         }
     }
 
@@ -709,6 +929,19 @@ public class WhitelistManager {
             return;
         }
 
+        // Persist to disk first
+        try {
+            Files.createDirectories(pendingQueuePath.getParent());
+            Files.write(pendingQueuePath, (json + System.lineSeparator()).getBytes(StandardCharsets.UTF_8),
+                StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+            logger.info("Persisted pending whitelist message to {}", pendingQueuePath.toAbsolutePath());
+        } catch (IOException e) {
+            logger.error("Failed to persist pending whitelist message, falling back to memory queue", e);
+            pendingWhitelistMessages.offer(json);
+            return;
+        }
+
+        // Also keep in-memory as a fast-access queue
         pendingWhitelistMessages.offer(json);
     }
 
@@ -717,9 +950,27 @@ public class WhitelistManager {
             return;
         }
 
+        // First flush in-memory queue
         String message;
         while ((message = pendingWhitelistMessages.poll()) != null) {
             webSocketServer.broadcast(message);
+        }
+
+        // Then flush persisted queue atomically
+        if (Files.exists(pendingQueuePath)) {
+            List<String> lines = new ArrayList<>();
+            try {
+                lines = Files.readAllLines(pendingQueuePath, StandardCharsets.UTF_8);
+                for (String l : lines) {
+                    if (l != null && !l.isBlank()) {
+                        webSocketServer.broadcast(l);
+                    }
+                }
+                // Delete the file after successful flush
+                Files.deleteIfExists(pendingQueuePath);
+            } catch (IOException e) {
+                logger.error("Failed to flush persisted pending whitelist messages", e);
+            }
         }
     }
 
@@ -756,6 +1007,21 @@ public class WhitelistManager {
 
         return guild.getTextChannelById(channelId);
     }
+
+        private void updateWhitelistStatusMessage() {
+            TextChannel logChannel = resolveWhitelistLogChannel();
+            if (logChannel == null || !logChannel.canTalk()) return;
+
+            if (whitelistStatusMessageId == null || whitelistStatusMessageId.isBlank()) {
+                logChannel.sendMessageEmbeds(buildWhitelistStatusEmbed().build())
+                    .queue(message -> whitelistStatusMessageId = message.getId(),
+                        error -> logger.warn("Failed to post whitelist status message", error));
+                return;
+            }
+
+            logChannel.editMessageEmbedsById(whitelistStatusMessageId, buildWhitelistStatusEmbed().build())
+                .queue(null, error -> whitelistStatusMessageId = null);
+        }
 
     private static class PendingWhitelistRequest {
         private final String discordId;

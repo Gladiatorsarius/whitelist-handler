@@ -2,7 +2,14 @@ package whitelisting.swordsmp;
 
 import combat.log.report.linking.PlayerLinkingManager;
 import combat.log.report.socket.SocketClient;
+import combat.log.report.socket.TestRequestMessage;
+import combat.log.report.socket.UnlinkMessage;
 import combat.log.report.whitelist.WhitelistCommandHandler;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+import net.minecraft.commands.Commands;
+import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.network.chat.Component;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.minecraft.server.MinecraftServer;
@@ -35,6 +42,8 @@ public class WhitelistingViaDiscord implements ModInitializer {
 		ServerLifecycleEvents.SERVER_STOPPING.register(this::onServerStop);
 	}
 
+	private WhitelistCommandHandler whitelistHandler;
+
 	private void onServerStart(MinecraftServer server) {
 		// Initialize player linking manager
 		Path configDir = Paths.get("config");
@@ -46,15 +55,53 @@ public class WhitelistingViaDiscord implements ModInitializer {
 
 		// Configure socket (use environment variables or defaults)
 		String serverUrl = System.getenv().getOrDefault("DISCORD_SOCKET_URL", "ws://localhost:8080/combat-log");
-		String authToken = System.getenv().getOrDefault("DISCORD_AUTH_TOKEN", "");
 
 		socketClient.configure(serverUrl);
-		socketClient.setAuthToken(authToken);
 
 		// Initialize whitelist command handler
-		WhitelistCommandHandler whitelistHandler = new WhitelistCommandHandler(server, socketClient);
-		socketClient.setWhitelistHandler(whitelistHandler);
+		this.whitelistHandler = new WhitelistCommandHandler(server, socketClient);
+		socketClient.setWhitelistHandler(this.whitelistHandler);
 		LOGGER.info("Initialized whitelist command handler");
+
+		// Register in-game commands: /discord test and /discord unlink
+		try {
+			server.getCommands().getDispatcher().register(
+				Commands.literal("discord")
+					.then(Commands.literal("test").executes(ctx -> {
+						SocketClient.getInstance().sendMessage(new TestRequestMessage());
+						ctx.getSource().sendSuccess(() -> Component.literal("Requested whitelist test. Results will appear in the bot's whitelist log channel."), false);
+						return 1;
+					}))
+					.then(Commands.literal("unlink").requires(src -> src.getEntity() instanceof ServerPlayer).executes(ctx -> {
+						try {
+							ServerPlayer player = ctx.getSource().getPlayerOrException();
+							String uuid = player.getUUID().toString();
+							var linkOpt = PlayerLinkingManager.getInstance().getLinkByUuid(uuid);
+							if (linkOpt.isEmpty()) {
+								player.sendSystemMessage(Component.literal("You are not linked to a Discord account."));
+								return 0;
+							}
+
+							// Construct unlink message and delegate to whitelist handler
+							UnlinkMessage unlink = new UnlinkMessage(uuid, player.getName().getString(), "player");
+							if (this.whitelistHandler != null) {
+								this.whitelistHandler.handleWhitelistRemove(unlink);
+							} else {
+								// Fallback: remove link and kick
+								PlayerLinkingManager.getInstance().removeLink(uuid);
+								player.connection.disconnect(Component.literal("You unlinked your Discord. Re-link in Discord to rejoin."));
+							}
+							return 1;
+						} catch (Exception e) {
+							LOGGER.error("Error executing /discord unlink", e);
+							return 0;
+						}
+					}))
+			);
+			LOGGER.info("Registered in-game /discord commands");
+		} catch (Exception e) {
+			LOGGER.warn("Failed to register /discord commands at runtime: {}", e.getMessage());
+		}
 
 		socketClient.connect();
 		LOGGER.info("Attempting to connect to Discord bot at {}", serverUrl);

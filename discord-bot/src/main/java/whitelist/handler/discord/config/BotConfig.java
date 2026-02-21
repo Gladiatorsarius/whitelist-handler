@@ -59,7 +59,6 @@ public class BotConfig {
     public static class WebSocketSettings {
         public int port = 8080;
         public String host = "0.0.0.0";
-        public String authToken = ""; // Token expected from connecting mods
     }
     
     public static class FeatureSettings {

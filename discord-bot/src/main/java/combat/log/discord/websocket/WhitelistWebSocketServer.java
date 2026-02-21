@@ -17,6 +17,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * WebSocket server that handles whitelist operations with Minecraft server.
@@ -27,6 +31,13 @@ public class WhitelistWebSocketServer extends WebSocketServer {
     private final BotConfig config;
     private WhitelistManager whitelistManager;
     private WebSocket minecraftConnection;
+
+    // Simple auth failure circuit-breaker to avoid abusive connections
+    private final AtomicInteger failedAuthCount = new AtomicInteger(0);
+    private volatile boolean acceptingConnections = true;
+    private final ScheduledExecutorService authScheduler = Executors.newSingleThreadScheduledExecutor();
+    private static final int AUTH_FAILURE_THRESHOLD = 3;
+    private static final int AUTH_COOLDOWN_SECONDS = 60;
 
     public WhitelistWebSocketServer(BotConfig config) {
         super(new InetSocketAddress(config.websocket.host, config.websocket.port));
@@ -41,6 +52,12 @@ public class WhitelistWebSocketServer extends WebSocketServer {
     public void onOpen(WebSocket conn, ClientHandshake handshake) {
         logger.info("New connection from: {}", conn.getRemoteSocketAddress());
 
+        if (!acceptingConnections) {
+            logger.warn("Temporarily rejecting connection from {} due to recent auth failures", conn.getRemoteSocketAddress());
+            conn.close(1013, "Service temporarily unavailable");
+            return;
+        }
+
         // Validate Authorization header if configured
         String authHeader = handshake.getFieldValue("Authorization");
         if (config.websocket.authToken != null && !config.websocket.authToken.isBlank()) {
@@ -48,22 +65,40 @@ public class WhitelistWebSocketServer extends WebSocketServer {
             if (!expected.equals(authHeader)) {
                 logger.warn("Rejecting connection due to missing/invalid Authorization header from {}", conn.getRemoteSocketAddress());
                 conn.close(1008, "Unauthorized");
+                int failures = failedAuthCount.incrementAndGet();
+                if (failures >= AUTH_FAILURE_THRESHOLD) {
+                    acceptingConnections = false;
+                    logger.warn("Auth failure threshold reached ({}). Temporarily disabling new connections for {}s", failures, AUTH_COOLDOWN_SECONDS);
+                    authScheduler.schedule(() -> {
+                        failedAuthCount.set(0);
+                        acceptingConnections = true;
+                        logger.info("Re-enabled accepting WebSocket connections after cooldown");
+                    }, AUTH_COOLDOWN_SECONDS, TimeUnit.SECONDS);
+                }
                 return;
             }
         }
 
-        minecraftConnection = conn;
+        synchronized (this) {
+            minecraftConnection = conn;
+        }
 
         if (whitelistManager != null) {
-            whitelistManager.handleMinecraftConnected();
+            try {
+                whitelistManager.handleMinecraftConnected();
+            } catch (Exception e) {
+                logger.error("Error while handling minecraft connected callback", e);
+            }
         }
     }
 
     @Override
     public void onClose(WebSocket conn, int code, String reason, boolean remote) {
         logger.warn("Connection closed: {} - {}", code, reason);
-        if (conn == minecraftConnection) {
-            minecraftConnection = null;
+        synchronized (this) {
+            if (conn == minecraftConnection) {
+                minecraftConnection = null;
+            }
         }
     }
 
@@ -142,15 +177,23 @@ public class WhitelistWebSocketServer extends WebSocketServer {
     }
 
     public boolean isMinecraftConnected() {
-        return minecraftConnection != null && minecraftConnection.isOpen();
+        synchronized (this) {
+            return minecraftConnection != null && minecraftConnection.isOpen();
+        }
     }
 
     public void broadcast(String message) {
-        if (minecraftConnection != null && minecraftConnection.isOpen()) {
-            minecraftConnection.send(message);
-            logger.debug("Broadcasted message to Minecraft");
-        } else {
-            logger.warn("Cannot broadcast - Minecraft not connected");
+        synchronized (this) {
+            if (minecraftConnection != null && minecraftConnection.isOpen()) {
+                try {
+                    minecraftConnection.send(message);
+                    logger.debug("Broadcasted message to Minecraft");
+                } catch (Exception e) {
+                    logger.error("Failed to send message to Minecraft connection", e);
+                }
+                return;
+            }
         }
+        logger.warn("Cannot broadcast - Minecraft not connected");
     }
 }

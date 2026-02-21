@@ -17,6 +17,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.net.InetSocketAddress;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * WebSocket server that handles whitelist operations with Minecraft server.
@@ -27,6 +31,8 @@ public class WhitelistWebSocketServer extends WebSocketServer {
     private final BotConfig config;
     private WhitelistManager whitelistManager;
     private WebSocket minecraftConnection;
+
+    // No shared-secret authentication: accept connections by default
 
     public WhitelistWebSocketServer(BotConfig config) {
         super(new InetSocketAddress(config.websocket.host, config.websocket.port));
@@ -41,29 +47,28 @@ public class WhitelistWebSocketServer extends WebSocketServer {
     public void onOpen(WebSocket conn, ClientHandshake handshake) {
         logger.info("New connection from: {}", conn.getRemoteSocketAddress());
 
-        // Validate Authorization header if configured
-        String authHeader = handshake.getFieldValue("Authorization");
-        if (config.websocket.authToken != null && !config.websocket.authToken.isBlank()) {
-            String expected = "Bearer " + config.websocket.authToken;
-            if (!expected.equals(authHeader)) {
-                logger.warn("Rejecting connection due to missing/invalid Authorization header from {}", conn.getRemoteSocketAddress());
-                conn.close(1008, "Unauthorized");
-                return;
-            }
+        // No authorization required for WebSocket connections in this deployment
+
+        synchronized (this) {
+            minecraftConnection = conn;
         }
 
-        minecraftConnection = conn;
-
         if (whitelistManager != null) {
-            whitelistManager.handleMinecraftConnected();
+            try {
+                whitelistManager.handleMinecraftConnected();
+            } catch (Exception e) {
+                logger.error("Error while handling minecraft connected callback", e);
+            }
         }
     }
 
     @Override
     public void onClose(WebSocket conn, int code, String reason, boolean remote) {
         logger.warn("Connection closed: {} - {}", code, reason);
-        if (conn == minecraftConnection) {
-            minecraftConnection = null;
+        synchronized (this) {
+            if (conn == minecraftConnection) {
+                minecraftConnection = null;
+            }
         }
     }
 
@@ -92,6 +97,34 @@ public class WhitelistWebSocketServer extends WebSocketServer {
             } else if ("link_lookup_response".equals(baseMessage.getType())) {
                 LinkLookupResponse resp = gson.fromJson(message, LinkLookupResponse.class);
                 if (whitelistManager != null) whitelistManager.handleLinkLookupResponse(resp);
+            } else if ("test_request".equals(baseMessage.getType())) {
+                // Trigger bot-side test runner
+                if (whitelistManager != null) {
+                    try {
+                        whitelistManager.runRemoteTest(null);
+                    } catch (Exception e) {
+                        logger.error("Error running remote test", e);
+                    }
+                }
+            } else if ("whitelist_list_response".equals(baseMessage.getType())) {
+                // Received full whitelist list from server
+                try {
+                    whitelist.handler.discord.models.WhitelistListResponse resp = gson.fromJson(message, whitelist.handler.discord.models.WhitelistListResponse.class);
+                    if (whitelistManager != null) whitelistManager.handleWhitelistListResponse(resp);
+                } catch (Exception e) {
+                    logger.error("Failed to handle whitelist_list_response", e);
+                }
+            } else if ("test_result".equals(baseMessage.getType())) {
+                // Received a test result from mod
+                try {
+                    // Simply log and post to channel via manager
+                    com.google.gson.JsonObject obj = gson.fromJson(message, com.google.gson.JsonObject.class);
+                    boolean success = obj.has("success") && obj.get("success").getAsBoolean();
+                    String msg = obj.has("message") ? obj.get("message").getAsString() : (success ? "Test completed successfully" : "Test failed");
+                    if (whitelistManager != null) whitelistManager.postTestResultToLogChannel(success, msg);
+                } catch (Exception e) {
+                    logger.error("Failed to handle test_result message", e);
+                }
             } else {
                 logger.warn("Unknown message type: {}", baseMessage.getType());
             }
@@ -142,15 +175,23 @@ public class WhitelistWebSocketServer extends WebSocketServer {
     }
 
     public boolean isMinecraftConnected() {
-        return minecraftConnection != null && minecraftConnection.isOpen();
+        synchronized (this) {
+            return minecraftConnection != null && minecraftConnection.isOpen();
+        }
     }
 
     public void broadcast(String message) {
-        if (minecraftConnection != null && minecraftConnection.isOpen()) {
-            minecraftConnection.send(message);
-            logger.debug("Broadcasted message to Minecraft");
-        } else {
-            logger.warn("Cannot broadcast - Minecraft not connected");
+        synchronized (this) {
+            if (minecraftConnection != null && minecraftConnection.isOpen()) {
+                try {
+                    minecraftConnection.send(message);
+                    logger.debug("Broadcasted message to Minecraft");
+                } catch (Exception e) {
+                    logger.error("Failed to send message to Minecraft connection", e);
+                }
+                return;
+            }
         }
+        logger.warn("Cannot broadcast - Minecraft not connected");
     }
 }

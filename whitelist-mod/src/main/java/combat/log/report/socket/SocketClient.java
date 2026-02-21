@@ -12,6 +12,17 @@ import org.slf4j.LoggerFactory;
 
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.Files;
+import java.nio.file.StandardOpenOption;
+import java.nio.charset.StandardCharsets;
+import java.io.IOException;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * WebSocket client for communicating with Discord bot (authoritative server-side implementation)
@@ -28,7 +39,10 @@ public class SocketClient {
     private boolean connected = false;
     private boolean reconnecting = false;
     private WhitelistCommandHandler whitelistHandler;
-    private String authToken = ""; // Configurable auth token
+    private final Path pendingQueuePath = Paths.get("data", "pending-whitelist.log");
+    private final ScheduledExecutorService reconnectScheduler = Executors.newSingleThreadScheduledExecutor();
+    private final AtomicInteger reconnectAttempts = new AtomicInteger(0);
+    private static final int MAX_RECONNECT_BACKOFF_SECONDS = 300; // 5 minutes
 
     private SocketClient() {
         this.httpClient = new OkHttpClient.Builder()
@@ -51,9 +65,7 @@ public class SocketClient {
     /**
      * Set the auth token for WebSocket authentication
      */
-    public void setAuthToken(String authToken) {
-        this.authToken = authToken != null ? authToken : "";
-    }
+
 
     /**
      * Set the whitelist command handler
@@ -66,28 +78,54 @@ public class SocketClient {
      * Connect to the Discord bot WebSocket server
      */
     public void connect() {
-        if (connected || reconnecting) {
-            return;
+        synchronized (this) {
+            if (connected || reconnecting) {
+                return;
+            }
+            reconnecting = true;
         }
 
-        reconnecting = true;
         Request request = new Request.Builder()
             .url(serverUrl)
-            .addHeader("Authorization", "Bearer " + authToken)
             .build();
 
         webSocket = httpClient.newWebSocket(request, new WebSocketListener() {
             @Override
             public void onOpen(@NotNull WebSocket webSocket, @NotNull Response response) {
-                connected = true;
-                reconnecting = false;
+                synchronized (SocketClient.this) {
+                    connected = true;
+                    reconnecting = false;
+                    reconnectAttempts.set(0);
+                }
                 LOGGER.info("Connected to Discord bot WebSocket server");
 
-                // Send any queued messages
+                // Send in-memory queued messages
                 String queuedMessage;
                 while ((queuedMessage = messageQueue.poll()) != null) {
-                    webSocket.send(queuedMessage);
-                    LOGGER.info("Sent queued message");
+                    try {
+                        webSocket.send(queuedMessage);
+                        LOGGER.info("Sent queued message (in-memory)");
+                    } catch (Exception e) {
+                        LOGGER.error("Failed to send queued message", e);
+                        messageQueue.offer(queuedMessage);
+                        break;
+                    }
+                }
+
+                // Flush persisted queue
+                if (Files.exists(pendingQueuePath)) {
+                    try {
+                        List<String> lines = Files.readAllLines(pendingQueuePath, StandardCharsets.UTF_8);
+                        for (String l : lines) {
+                            if (l != null && !l.isBlank()) {
+                                webSocket.send(l);
+                                LOGGER.info("Sent persisted queued message");
+                            }
+                        }
+                        Files.deleteIfExists(pendingQueuePath);
+                    } catch (IOException ioe) {
+                        LOGGER.error("Failed to flush persisted pending messages", ioe);
+                    }
                 }
             }
 
@@ -99,18 +137,23 @@ public class SocketClient {
             @Override
             public void onClosing(@NotNull WebSocket webSocket, int code, @NotNull String reason) {
                 webSocket.close(1000, null);
-                connected = false;
+                synchronized (SocketClient.this) {
+                    connected = false;
+                    reconnecting = false;
+                }
                 LOGGER.warn("WebSocket closing: {} - {}", code, reason);
             }
 
             @Override
             public void onFailure(@NotNull WebSocket webSocket, @NotNull Throwable t, Response response) {
-                connected = false;
-                reconnecting = false;
+                synchronized (SocketClient.this) {
+                    connected = false;
+                    reconnecting = false;
+                }
                 LOGGER.error("WebSocket connection failed: {}", t.getMessage());
 
-                // Schedule reconnection after 30 seconds
-                scheduleReconnect();
+                // Schedule reconnection with backoff
+                scheduleReconnectWithBackoff();
             }
         });
     }
@@ -121,21 +164,38 @@ public class SocketClient {
     public void sendMessage(SocketMessage message) {
         String json = gson.toJson(message);
         sendMessageJson(json);
+        LOGGER.debug("Enqueued sendMessage for type={}", message.getType());
     }
 
     /**
      * Send a JSON message to the Discord bot
      */
     private void sendMessageJson(String message) {
-        if (connected && webSocket != null) {
-            webSocket.send(message);
-            LOGGER.info("Sent message to Discord bot");
-        } else {
-            // Queue message for later delivery
-            messageQueue.offer(message);
-            LOGGER.warn("Discord bot not connected, message queued ({} in queue)", messageQueue.size());
+        synchronized (this) {
+            if (connected && webSocket != null) {
+                try {
+                    webSocket.send(message);
+                    LOGGER.info("Sent message to Discord bot");
+                    return;
+                } catch (Exception e) {
+                    LOGGER.error("Failed to send message, will queue", e);
+                }
+            }
+        }
 
-            // Try to connect if not already trying
+        // Persist to disk first
+        try {
+            Files.createDirectories(pendingQueuePath.getParent());
+            Files.write(pendingQueuePath, (message + System.lineSeparator()).getBytes(StandardCharsets.UTF_8),
+                StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        } catch (IOException e) {
+            LOGGER.error("Failed to persist pending message, falling back to in-memory queue", e);
+            messageQueue.offer(message);
+        }
+
+        // Try to connect if not already trying
+        synchronized (this) {
+            messageQueue.offer(message);
             if (!reconnecting) {
                 connect();
             }
@@ -299,17 +359,21 @@ public class SocketClient {
      * Schedule reconnection attempt
      */
     private void scheduleReconnect() {
-        new Thread(() -> {
-            try {
-                Thread.sleep(30000); // Wait 30 seconds
-                if (!connected && !reconnecting) {
-                    LOGGER.info("Attempting to reconnect to Discord bot...");
-                    connect();
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+        // Deprecated: kept for compatibility; prefer scheduleReconnectWithBackoff
+        scheduleReconnectWithBackoff();
+    }
+
+    private void scheduleReconnectWithBackoff() {
+        int attempt = reconnectAttempts.incrementAndGet();
+        long delay = Math.min((1L << Math.min(attempt, 8)), MAX_RECONNECT_BACKOFF_SECONDS);
+        LOGGER.info("Scheduling reconnect attempt #{} in {}s", attempt, delay);
+        reconnectScheduler.schedule(() -> {
+            synchronized (SocketClient.this) {
+                if (connected || reconnecting) return;
+                reconnecting = true;
             }
-        }).start();
+            connect();
+        }, delay, TimeUnit.SECONDS);
     }
 
     /**

@@ -1,7 +1,4 @@
 {
-  "socketAuth": {
-    "token": "replace-with-shared-secret"
-  },
   "whitelist": {
     "autoExecute": true
   }
