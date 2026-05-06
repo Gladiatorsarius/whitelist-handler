@@ -20,8 +20,8 @@ public class WhitelistCommandHandler {
     /**
      * Process a whitelist add command
      */
-    public void handleWhitelistAdd(String requestId, String playerName, String playerUuid, String discordId, String requestedBy) {
-        LOGGER.info("Processing whitelist add for player: {} ({})", playerName, playerUuid);
+    public void handleWhitelistAdd(String requestId, String playerName, String playerUuid, String discordId, String discordDisplayName, String requestedBy) {
+        LOGGER.info("Processing whitelist add for player: {} ({}) - Discord: {}", playerName, playerUuid, discordDisplayName);
 
         try {
             // Execute whitelist command using the server's command dispatcher
@@ -38,13 +38,13 @@ public class WhitelistCommandHandler {
             LOGGER.info("Added {} to whitelist", playerName);
 
             // Send confirmation back to Discord (embedded)
-            DiscordBotManager.sendWhitelistConfirmation(requestId, true, playerName, null);
+            DiscordBotManager.sendWhitelistConfirmation(requestId, true, playerName, discordDisplayName, null);
 
         } catch (Exception e) {
             LOGGER.error("Failed to add player to whitelist: {}", playerName, e);
 
             // Send error confirmation back to Discord
-            DiscordBotManager.sendWhitelistConfirmation(requestId, false, playerName, e.getMessage());
+            DiscordBotManager.sendWhitelistConfirmation(requestId, false, playerName, discordDisplayName, e.getMessage());
         }
     }
 

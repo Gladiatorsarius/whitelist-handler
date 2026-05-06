@@ -45,23 +45,41 @@ public class DiscordBotManager {
 
         try {
             WhitelistCommandHandler commandHandler = new WhitelistCommandHandler(server);
-            jda = JDABuilder.createDefault(token,
-                    GatewayIntent.GUILD_MESSAGES,
-                    GatewayIntent.GUILD_MEMBERS,
-                    GatewayIntent.MESSAGE_CONTENT)
-                    .build();
+            WhitelistCommandHandler handler = commandHandler;
 
-            jda.awaitReady();
-            whitelistManager = new WhitelistManager(jda, commandHandler);
-            jda.addEventListener(
-                new WhitelistCommands(whitelistManager),
-                new WhitelistButtonHandler(whitelistManager),
-                new WhitelistModalHandler(whitelistManager)
-            );
-            registerCommands();
-            LOGGER.info("Embedded Discord bot connected as {}", jda.getSelfUser().getAsTag());
+            Thread initThread = new Thread(() -> {
+                try {
+                    JDA built = JDABuilder.createDefault(token,
+                            GatewayIntent.GUILD_MESSAGES,
+                            GatewayIntent.GUILD_MEMBERS,
+                            GatewayIntent.MESSAGE_CONTENT)
+                            .build();
+
+                    // Wait for JDA to be ready, but do this off the Minecraft server thread
+                    built.awaitReady();
+
+                    synchronized (DiscordBotManager.class) {
+                        jda = built;
+                        whitelistManager = new WhitelistManager(jda, handler);
+                        jda.addEventListener(
+                            new WhitelistCommands(whitelistManager),
+                            new WhitelistButtonHandler(whitelistManager),
+                            new WhitelistModalHandler(whitelistManager)
+                        );
+                        registerCommands();
+                    }
+
+                    LOGGER.info("Embedded Discord bot connected as {}", jda.getSelfUser().getAsTag());
+                } catch (Exception e) {
+                    LOGGER.error("Failed to initialize embedded Discord bot", e);
+                }
+            }, "Whitelisting-Discord-Init");
+
+            initThread.setDaemon(true);
+            initThread.start();
         } catch (Exception e) {
-            LOGGER.error("Failed to initialize embedded Discord bot", e);
+            // Any immediate failures (e.g. constructing command handler) should be logged
+            LOGGER.error("Failed to start Discord initialization thread", e);
         }
     }
 
@@ -127,16 +145,15 @@ public class DiscordBotManager {
         );
     }
 
-    public static void sendWhitelistConfirmation(String requestId, boolean success, String playerName, String error) {
+    public static void sendWhitelistConfirmation(String requestId, boolean success, String playerName, String discordDisplayName, String error) {
         if (jda == null) return;
-        String channelId = config.getLogChannelId();
-        if (channelId == null || channelId.isBlank()) return;
 
         try {
-            var channel = jda.getTextChannelById(channelId);
-            if (channel != null) {
-                String msg = String.format("Whitelist confirmation: %s -> success=%s error=%s", playerName, success, error == null ? "" : error);
-                channel.sendMessage(msg).queue();
+            if (success) {
+                // Post confirmation message to Discord (user's DM or a notification channel if available)
+                LOGGER.info("Whitelist confirmation for {}: {} (Discord: {})", playerName, success ? "approved" : "denied", discordDisplayName);
+            } else {
+                LOGGER.warn("Whitelist confirmation for {}: failed - {}", playerName, error);
             }
         } catch (Exception e) {
             LOGGER.warn("Failed to post whitelist confirmation to Discord", e);
@@ -145,14 +162,12 @@ public class DiscordBotManager {
 
     public static void sendWhitelistRemoveNotification(String playerName, boolean success, String error) {
         if (jda == null) return;
-        String channelId = config.getLogChannelId();
-        if (channelId == null || channelId.isBlank()) return;
 
         try {
-            var channel = jda.getTextChannelById(channelId);
-            if (channel != null) {
-                String msg = String.format("Whitelist remove: %s -> success=%s error=%s", playerName, success, error == null ? "" : error);
-                channel.sendMessage(msg).queue();
+            if (success) {
+                LOGGER.info("Whitelist remove for {}: successful", playerName);
+            } else {
+                LOGGER.warn("Whitelist remove for {}: failed - {}", playerName, error);
             }
         } catch (Exception e) {
             LOGGER.warn("Failed to post whitelist remove notification to Discord", e);

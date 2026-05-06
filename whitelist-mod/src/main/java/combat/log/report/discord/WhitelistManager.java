@@ -79,7 +79,7 @@ public class WhitelistManager {
             PendingWhitelistRequest pending = new PendingWhitelistRequest(user.getId(), user.getAsTag(), profile.getName(), uuid, System.currentTimeMillis(), hook);
             pendingRequests.put(requestId, pending);
 
-            commandHandler.handleWhitelistAdd(requestId, profile.getName(), uuid, user.getId(), "discord");
+            commandHandler.handleWhitelistAdd(requestId, profile.getName(), uuid, user.getId(), user.getAsTag(), "discord");
 
             if (hook != null) {
                 try { hook.editOriginal("✅ Your request was processed.").queue(); } catch (Exception ignored) {}
@@ -123,10 +123,7 @@ public class WhitelistManager {
     public boolean hasStaffPermission(Member member) {
         if (member == null) return false;
         if (member.hasPermission(Permission.MANAGE_SERVER)) return true;
-        String staffRole = DiscordBotManager.getConfig().getStaffRoleId();
-        if (staffRole.isBlank()) {
-            staffRole = System.getenv("DISCORD_STAFF_ROLE_ID");
-        }
+        String staffRole = System.getenv("DISCORD_STAFF_ROLE_ID");
         if (staffRole == null || staffRole.isBlank()) return false;
         final String targetStaffRole = staffRole;
         return member.getRoles().stream().anyMatch(r -> targetStaffRole.equals(r.getId()));
@@ -141,7 +138,7 @@ public class WhitelistManager {
         LOGGER.info("Approving request {} by {}", requestId, staffName);
         // Create authoritative link and whitelist
         LinkingService.getInstance().createLink(pending.discordId, pending.minecraftName, true);
-        commandHandler.handleWhitelistAdd(requestId, pending.minecraftName, pending.minecraftUuid, pending.discordId, staffId);
+        commandHandler.handleWhitelistAdd(requestId, pending.minecraftName, pending.minecraftUuid, pending.discordId, pending.discordTag, staffId);
         if (pending.hook != null) {
             try { pending.hook.editOriginal("✅ Request approved and whitelisting initiated.").queue(); } catch (Exception ignored) {}
         }

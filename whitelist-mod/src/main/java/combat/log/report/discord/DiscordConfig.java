@@ -17,8 +17,6 @@ public class DiscordConfig {
 
     public String token;
     public String guildId;
-    public String logChannelId;
-    public String staffRoleId;
 
     /**
      * Load or create Discord config from file.
@@ -39,8 +37,6 @@ public class DiscordConfig {
             DiscordConfig defaults = new DiscordConfig();
             defaults.token = "";
             defaults.guildId = "";
-            defaults.logChannelId = "";
-            defaults.staffRoleId = "";
 
             String json = GSON.toJson(defaults);
             Files.write(file, json.getBytes());
@@ -63,14 +59,6 @@ public class DiscordConfig {
 
     public String getGuildId() {
         return valueOrBlank(guildId);
-    }
-
-    public String getLogChannelId() {
-        return valueOrBlank(logChannelId);
-    }
-
-    public String getStaffRoleId() {
-        return valueOrBlank(staffRoleId);
     }
 
     private String valueOrBlank(String value) {
