@@ -1,110 +1,165 @@
-# WebSocket API (bot ↔ server)
+# WebSocket Protocol: Discord Bot ↔ Minecraft Mod
 
-Schemas (JSON):
+This document describes the JSON-based messages exchanged between the Discord bot and the Minecraft whitelist mod over WebSocket.
 
-- `link_lookup` (Bot → Server)
+## Connection
 
-  {
-    "type": "link_lookup",
-    "requestId": "<uuid>",
-    "query": "byUuid|byDiscord|byName",
-    "value": "<query-value>"
-  }
+- **URL**: `ws://bot-host:bot-port/combat-log`
+- **Default URL on mod**: `ws://localhost:8080/combat-log` (configurable via `DISCORD_SOCKET_URL` environment variable)
+- **Authentication**: Optional. If `websocket.authToken` is set on the bot, the mod must include `Authorization: Bearer <token>` header.
 
-- `link_lookup_response` (Server → Bot)
+## Message Format
 
-  {
-    "type": "link_lookup_response",
-    "requestId": "<uuid>",
-    "found": true|false,
-    "discordId": "<discord id> (optional)",
-    "minecraftUuid": "<uuid> (optional)",
-    "minecraftName": "<name> (optional)",
-    "whitelisted": true|false
-  }
+All messages are JSON objects with a required `type` field and message-specific payload fields.
 
-- `link_create_request` (Bot → Server)
+---
 
-  {
-    "type": "link_create_request",
-    "requestId": "<uuid>",
-    "discordId": "<discord id>",
-    "playerUuid": "<minecraft uuid>",
-    "playerName": "<minecraft name>",
-    "requestedBy": "<staff id or AUTO_APPROVED>",
-    "whitelisted": true|false
-  }
+## Bot → Mod Messages
 
-- `link_created` (Server → Bot)
+### `link_lookup`
 
-  {
-    "type": "link_created",
-    "requestId": "<uuid>",
-    "discordId": "<discord id>",
-    "playerUuid": "<minecraft uuid>",
-    "playerName": "<minecraft name>"
-  }
+Bot requests information about a specific player link.
 
-- `combat_log_incident` (Server → Bot)
-
-  {
-    "type": "combat_log_incident",
-    "incidentId": "<uuid>",
-    "playerUuid": "<uuid>",
-    "playerName": "<name>",
-    "combatTimeRemaining": <double>,
-    "discordId": "<discord id> (optional)"
-  }
-
-Auth:
-- Each connection must include an `Authorization: Bearer <token>` header. The token is configured on both sides.
-
-Notes:
-- Bots should treat `link_lookup_response.found == false` as "no link".
-- Bots must send `link_create_request` for authoritative writes; servers respond with `link_created` once persisted.
-- The server persists links to `config/player-links.json` (or a path configured by the server mod).
-# WebSocket API — Whitelist Handler
-
-This document describes the minimal WebSocket messages used between the whitelist Discord bot and the whitelist server mod.
-
-1) `link_lookup` (bot → mod)
-
-Request:
-```
-{ "type": "link_lookup", "requestId": "<uuid>", "query": "byUuid|byDiscord|byName", "value": "..." }
+**Request (Bot → Mod)**:
+```json
+{
+  "type": "link_lookup",
+  "requestId": "<uuid>",
+  "query": "byUuid|byDiscord|byName",
+  "value": "<query-value>"
+}
 ```
 
-Response (`link_lookup_response`):
-```
-{ "type": "link_lookup_response", "requestId": "<uuid>", "found": true|false,
-  "discordId": "...", "minecraftUuid": "...", "minecraftName": "...", "whitelisted": true|false }
-```
-
-2) `link_create_request` (bot → mod)
-
-Request:
-```
-{ "type":"link_create_request", "requestId":"<uuid>", "discordId":"...", "playerUuid":"...", "playerName":"...", "requestedBy":"<user>" }
-```
-
-Response (`link_created`):
-```
-{ "type":"link_created", "requestId":"<uuid>", "discordId":"...", "playerUuid":"...", "playerName":"...", "whitelisted":true }
+**Response (Mod → Bot)**:
+```json
+{
+  "type": "link_lookup_response",
+  "requestId": "<uuid>",
+  "found": true,
+  "discordId": "123456789",
+  "minecraftUuid": "550e8400-e29b-41d4-a716-446655440000",
+  "minecraftName": "PlayerName",
+  "whitelisted": true
+}
 ```
 
-3) `link_removed` (mod → bot)
+### `link_create_request`
 
-Emitted when a link is removed on the server (manual or vanilla whitelist removal):
-```
-{ "type":"link_removed", "discordId":"...", "playerUuid":"...", "playerName":"..." }
+Bot requests the mod to create a new Discord↔Minecraft link and add the player to the server whitelist.
+
+**Request (Bot → Mod)**:
+```json
+{
+  "type": "link_create_request",
+  "requestId": "<uuid>",
+  "discordId": "123456789",
+  "playerUuid": "550e8400-e29b-41d4-a716-446655440000",
+  "playerName": "PlayerName",
+  "requestedBy": "staff-user-id or AUTO_APPROVED"
+}
 ```
 
-4) `combat_log_incident` (mod → bot)
-
-The mod should include `discordId` when available to avoid bot-side lookups:
+**Response (Mod → Bot)**:
+```json
+{
+  "type": "link_created",
+  "requestId": "<uuid>",
+  "discordId": "123456789",
+  "playerUuid": "550e8400-e29b-41d4-a716-446655440000",
+  "playerName": "PlayerName"
+}
 ```
-{ "type":"combat_log_incident", "incidentId":"...", "playerUuid":"...", "playerName":"...", "combatTimeRemaining":123, "discordId":"optional" }
+
+### `unlink_player`
+
+Bot requests the mod to unlink a player and remove them from the server whitelist.
+
+**Request (Bot → Mod)**:
+```json
+{
+  "type": "unlink_player",
+  "playerUuid": "550e8400-e29b-41d4-a716-446655440000",
+  "playerName": "PlayerName",
+  "reason": "admin_unlink|player_request|link_removal"
+}
 ```
 
-Auth
-- Include `socketAuth.token` in the bot and mod configs. Validate on connection/messages.
+**Mod acknowledges** by logging the unlink event internally.
+
+---
+
+## Mod → Bot Messages
+
+### `whitelist_confirmation`
+
+Mod confirms a successful whitelist add.
+
+**Message (Mod → Bot)**:
+```json
+{
+  "type": "whitelist_confirmation",
+  "discordId": "123456789",
+  "playerUuid": "550e8400-e29b-41d4-a716-446655440000",
+  "playerName": "PlayerName",
+  "success": true
+}
+```
+
+### `whitelist_remove_confirmation`
+
+Mod confirms a successful whitelist remove.
+
+**Message (Mod → Bot)**:
+```json
+{
+  "type": "whitelist_remove_confirmation",
+  "playerUuid": "550e8400-e29b-41d4-a716-446655440000",
+  "playerName": "PlayerName",
+  "success": true
+}
+```
+
+### `vanilla_whitelist_add`
+
+Mod notifies bot when a player is added to the vanilla server whitelist (e.g., via `/whitelist add` command).
+
+**Message (Mod → Bot)**:
+```json
+{
+  "type": "vanilla_whitelist_add",
+  "playerUuid": "550e8400-e29b-41d4-a716-446655440000",
+  "playerName": "PlayerName"
+}
+```
+
+### `test_request`
+
+Mod (admin or `/discord test` command) requests the bot to run an end-to-end test.
+
+**Message (Mod → Bot)**:
+```json
+{
+  "type": "test_request"
+}
+```
+
+**Bot responds with** a series of link operations, then sends:
+```json
+{
+  "type": "test_result",
+  "success": true,
+  "message": "Test completed successfully"
+}
+```
+
+The bot posts results to the configured whitelist log channel.
+
+---
+
+## Notes
+
+- All `requestId` values should be unique UUIDs to correlate request/response pairs.
+- The mod is the authoritative store: if a link exists in the mod's `player-links.json`, it is the source of truth.
+- If authentication is enabled (`websocket.authToken` on bot), all connections and messages are subject to token validation.
+- The bot maintains a file-backed pending queue at `discord-bot/data/pending-whitelist.log` to ensure messages survive restarts.
+- If the mod is disconnected, the bot will queue messages and resend them when the connection is re-established.

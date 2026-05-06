@@ -1,39 +1,90 @@
-
 # Whitelist Server Mod
 
-Fabric Minecraft mod that acts as the authoritative store for Discord↔Minecraft links and exposes a WebSocket API for integration with Discord bots.
+Fabric Minecraft mod that acts as the authoritative store for Discord↔Minecraft player links and coordinates with a Discord bot over WebSocket.
 
-Core responsibilities
-- Persist player links (default: `config/player-links.json`).
-- Handle `link_lookup` and `link_create_request` messages from external bots and emit `link_created` / `whitelist_confirmation` / `link_removed` events.
-- Optionally execute in-server `whitelist add` / `whitelist remove` when configured.
+## Core Responsibilities
 
-Installation
-1. Build the mod with the Gradle wrapper (inside `whitelist-mod/`).
-2. Copy the generated JAR into the server `mods/` folder and restart the server.
--3. Edit `config.json` (or `config.example.json`) to set the WebSocket options and other settings.
+- **Persist player links**: Stores Discord↔Minecraft associations in `config/player-links.json`.
+- **WebSocket API**: Exposes a listener on the configured port that the Discord bot connects to.
+- **Whitelist coordination**: Handles `/whitelist add` and `/whitelist remove` commands, optionally coordinating with the bot.
+- **In-game commands**: Provides `/discord test` and `/discord unlink` for admins and players.
 
-Important configuration
-- `playerLinks.path` — where links are persisted (defaults to `config/player-links.json`). Ensure the server has write permissions.
-  
-Note: This deployment does not use a shared secret by default; the WebSocket endpoint accepts unauthenticated connections unless you modify the server and bot to require an `Authorization` header.
-- `playerLinks.path` — where links are persisted (defaults to `config/player-links.json`). Ensure the server has write permissions.
+## Installation
 
-In-game commands
-- `/discord test` — request the bot to run its remote test (server-initiated). Use as a server admin; the bot will post results to its whitelist log channel.
-- `/discord unlink` — unlink a player from Discord. This can be used by players (self-unlink) or by staff to unlink others (depending on permissions).
+1. Build the mod with the Gradle wrapper (inside `whitelist-mod/`):
+   ```powershell
+   Set-Location whitelist-handler/whitelist-mod
+   .\gradlew.bat build
+   ```
 
-Notes on end-to-end testing
-- The bot and mod exchange short JSON messages over WebSocket. A typical test flow:
-	1. Bot or mod sends `link_create_request` / `test_request`.
-	2. Server writes the link and responds with `link_created`.
-	3. Bot performs a `link_lookup` and optionally issues `unlink` to clean up.
-	4. Test results are posted to the bot's configured whitelist log channel.
+2. Copy the generated JAR from `build/libs/` to your server's `mods/` folder:
+   ```powershell
+   copy build/libs/whitelist-mod-*.jar /path/to/server/mods/
+   ```
 
-Security & troubleshooting
-- Confirm the `Authorization` header matches `Bearer <token>` on both sides.
-- If the mod is rejecting connections, check the server logs for handshake errors and ensure the port is open.
+3. Restart your Minecraft server. The mod will create `config/player-links.json` on first run.
 
-See also
-- Protocol: [../docs/websocket-api.md](../docs/websocket-api.md)
-- Bot: [../discord-bot/README.md](../discord-bot/README.md)
+## Configuration
+
+The mod uses two configuration mechanisms:
+
+### Environment Variable (Recommended)
+Set the `DISCORD_SOCKET_URL` environment variable to specify the Discord bot's WebSocket endpoint:
+
+```bash
+# Example
+export DISCORD_SOCKET_URL=ws://localhost:8080/combat-log
+```
+
+If not set, the mod defaults to `ws://localhost:8080/combat-log`.
+
+### Optional: WebSocket Authentication
+If the Discord bot has `websocket.authToken` set in its config, ensure the bot and mod use matching tokens. The mod will include `Authorization: Bearer <token>` in the WebSocket handshake.
+
+## Data Storage
+
+- **Player links**: Persisted to `config/player-links.json` on the server. This file is authoritative and contains Discord ID ↔ Minecraft UUID mappings.
+- **Link format**:
+  ```json
+  {
+    "links": [
+      {
+        "discordId": "123456789",
+        "playerUuid": "550e8400-e29b-41d4-a716-446655440000",
+        "playerName": "PlayerName",
+        "whitelisted": true
+      }
+    ]
+  }
+  ```
+
+## In-Game Commands
+
+### `/discord test`
+- **Description**: Request the Discord bot to run its end-to-end test (create → lookup → unlink). Results appear in the bot's whitelist log channel.
+- **Usage**: `/discord test`
+- **Permission**: Server operator (OP or creative mode).
+
+### `/discord unlink`
+- **Description**: Unlink your Discord account from Minecraft.
+  - Players can unlink themselves.
+  - Staff can unlink other players using: `/discord unlink <player-name>`
+- **Usage**:
+  - Self-unlink: `/discord unlink` (no arguments)
+  - Admin unlink: `/discord unlink <player-name>`
+
+## WebSocket Protocol
+
+The mod connects to the Discord bot's WebSocket endpoint and exchanges JSON messages. See [../docs/websocket-api.md](../docs/websocket-api.md) for the protocol reference.
+
+## Troubleshooting
+
+- **Mod cannot connect to bot**: Verify `DISCORD_SOCKET_URL` is set correctly and the bot's WebSocket server is running. Check firewall and network settings.
+- **Links not persisting**: Ensure the server has write permission to the `config/` directory.
+- **Commands not responding**: Verify the mod loaded successfully by checking server logs for `[Whitelisting via Discord]` messages.
+- **WebSocket connection errors**: If authentication is enabled, confirm both bot and mod have matching `authToken` values.
+
+## See Also
+
+- [Discord Bot Setup](../discord-bot/README.md)
+- [WebSocket Protocol](../docs/websocket-api.md)

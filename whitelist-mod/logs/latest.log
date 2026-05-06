@@ -1,9 +1,9 @@
-[15:42:14] [Test worker/INFO]: No existing link file found at C:\Users\paulm\AppData\Local\Temp\junit6790193985530394327\player-links.json, starting fresh
-[15:42:14] [Test worker/INFO]: Initialized PlayerLinkingManager (0 links)
-[15:42:14] [Test worker/INFO]: Added player link: Discord 123456789 <-> Minecraft TestPlayer (550e8400-e29b-41d4-a716-446655440000)
-[15:42:14] [Test worker/INFO]: Added player link: Discord 123456789 <-> Minecraft TestPlayer (550e8400-e29b-41d4-a716-446655440000)
-[15:42:14] [Test worker/INFO]: Added player link: Discord 123456789 <-> Minecraft TestPlayer (550e8400-e29b-41d4-a716-446655440000)
-[15:42:14] [Test worker/INFO]: Removed player link for Minecraft UUID: 550e8400-e29b-41d4-a716-446655440000 (TestPlayer)
-[15:42:14] [Test worker/INFO]: Configured socket server URL: ws://localhost:1/invalid
-[15:42:14] [OkHttp http://localhost:1/.../ERROR]: WebSocket connection failed: Failed to connect to localhost/[0:0:0:0:0:0:0:1]:1
-[15:42:14] [OkHttp http://localhost:1/.../INFO]: Scheduling reconnect attempt #1 in 2s
+[13:09:51] [Test worker/INFO]: No existing link file found at C:\Users\paulm\AppData\Local\Temp\junit12778123024409883908\player-links.json, starting fresh
+[13:09:51] [Test worker/INFO]: Initialized PlayerLinkingManager (0 links)
+[13:09:51] [Test worker/INFO]: Added player link: Discord 123456789 <-> Minecraft TestPlayer (550e8400-e29b-41d4-a716-446655440000)
+[13:09:51] [Test worker/INFO]: Added player link: Discord 123456789 <-> Minecraft TestPlayer (550e8400-e29b-41d4-a716-446655440000)
+[13:09:51] [Test worker/INFO]: Added player link: Discord 123456789 <-> Minecraft TestPlayer (550e8400-e29b-41d4-a716-446655440000)
+[13:09:51] [Test worker/INFO]: Removed player link for Minecraft UUID: 550e8400-e29b-41d4-a716-446655440000 (TestPlayer)
+[13:09:51] [Test worker/INFO]: Configured socket server URL: ws://localhost:1/invalid
+[13:09:51] [OkHttp http://localhost:1/.../ERROR]: WebSocket connection failed: Failed to connect to localhost/[0:0:0:0:0:0:0:1]:1
+[13:09:51] [OkHttp http://localhost:1/.../INFO]: Scheduling reconnect attempt #1 in 2s
