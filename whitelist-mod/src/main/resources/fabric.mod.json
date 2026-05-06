@@ -3,7 +3,7 @@
 	"id": "whitelisting-via-discord",
 	"version": "${version}",
 	"name": "Whitelisting via discord",
-	"description": "This is an example description! Tell everyone what your mod is about!",
+	"description": "Embeds the Discord whitelist bot directly inside the whitelist mod.",
 	"authors": [
 		"Me!"
 	],

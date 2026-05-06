@@ -1,4 +1,4 @@
-package combat.log.report.linking;
+package whitelisting.swordsmp.linking;
 
 /**
  * Represents a link between Discord ID and Minecraft UUID

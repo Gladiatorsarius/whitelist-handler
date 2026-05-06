@@ -1,4 +1,4 @@
-package combat.log.report.linking;
+package whitelisting.swordsmp.linking;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
@@ -14,6 +14,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.HashMap;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Map;
 import java.util.Optional;
 
@@ -101,6 +103,10 @@ public class PlayerLinkingManager {
 
     public synchronized Optional<PlayerLink> getLinkByDiscord(String discordId) {
         return Optional.ofNullable(linksByDiscord.get(discordId));
+    }
+
+    public synchronized Collection<PlayerLink> getAllLinks() {
+        return new ArrayList<>(linksByUuid.values());
     }
 
     private void loadLinks() {

@@ -46,6 +46,12 @@ dependencies {
 	// JSON and WebSocket client for server↔bot communication
 	implementation 'com.google.code.gson:gson:2.10.1'
 	implementation 'com.squareup.okhttp3:okhttp:4.11.0'
+    
+	// Embedded Discord bot (JDA) and database/logging
+	implementation 'net.dv8tion:JDA:5.0.0'
+	implementation 'org.xerial:sqlite-jdbc:3.45.1.0'
+	implementation 'org.slf4j:slf4j-api:2.0.9'
+	implementation 'ch.qos.logback:logback-classic:1.4.14'
 
 }
 
