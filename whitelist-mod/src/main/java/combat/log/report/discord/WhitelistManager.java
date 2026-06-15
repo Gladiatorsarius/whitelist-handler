@@ -81,10 +81,6 @@ public class WhitelistManager {
 
             commandHandler.handleWhitelistAdd(requestId, profile.getName(), uuid, user.getId(), user.getAsTag(), "discord");
 
-            if (hook != null) {
-                try { hook.editOriginal("✅ Your request was processed.").queue(); } catch (Exception ignored) {}
-            }
-
             return WhitelistResult.success("Request submitted — waiting for Minecraft confirmation.");
         } catch (Exception e) {
             LOGGER.error("Error processing whitelist request", e);
@@ -100,19 +96,40 @@ public class WhitelistManager {
             }
 
             String uuid = opt.get();
-            LinkingService.getInstance().removeLinkByUuid(uuid);
-
-            // Also remove from whitelist on server
+            String playerName = null;
             var linkOpt = PlayerLinkingManager.getInstance().getLinkByUuid(uuid);
             if (linkOpt.isPresent()) {
-                var link = linkOpt.get();
-                commandHandler.handleWhitelistRemove(link.getMinecraftUuid(), link.getMinecraftName(), "player");
+                playerName = linkOpt.get().getMinecraftName();
             }
+            LinkingService.getInstance().removeLinkByUuid(uuid);
+
+            if (playerName != null) {
+                commandHandler.handleWhitelistRemove(uuid, playerName, "player", "Unlinked on Discord by **" + user.getAsTag() + "**");
+                postToLogChannel("🔴 **" + playerName + "** was removed from the whitelist (Unlinked on Discord by **" + user.getAsTag() + "**)");
+            } else {
+                postToLogChannel("🔓 **" + user.getAsTag() + "** unlinked their account.");
+            }
+            updateWhitelistList();
 
             return WhitelistResult.success("Unlinked your account.");
         } catch (Exception e) {
             LOGGER.error("Failed to unlink", e);
             return WhitelistResult.error("Failed to unlink your account.");
+        }
+    }
+
+    public void updateRequestMessage(String requestId, String newMessage) {
+        PendingWhitelistRequest pending = pendingRequests.get(requestId);
+        if (pending != null && pending.hook != null) {
+            try { pending.hook.editOriginal(newMessage).queue(); } catch (Exception ignored) {}
+        }
+    }
+
+    public void postToLogChannel(String message) {
+        if (jda == null || whitelistLogChannelId == null || whitelistLogChannelId.isBlank()) return;
+        TextChannel channel = jda.getTextChannelById(whitelistLogChannelId);
+        if (channel != null) {
+            channel.sendMessage(message).queue();
         }
     }
 
@@ -139,6 +156,7 @@ public class WhitelistManager {
         // Create authoritative link and whitelist
         LinkingService.getInstance().createLink(pending.discordId, pending.minecraftName, true);
         commandHandler.handleWhitelistAdd(requestId, pending.minecraftName, pending.minecraftUuid, pending.discordId, pending.discordTag, staffId);
+        postToLogChannel("✅ Request for **" + pending.minecraftName + "** approved by " + staffName);
         if (pending.hook != null) {
             try { pending.hook.editOriginal("✅ Request approved and whitelisting initiated.").queue(); } catch (Exception ignored) {}
         }
@@ -151,6 +169,7 @@ public class WhitelistManager {
             return;
         }
         LOGGER.info("Denying request {} by {} - {}", requestId, staffName, reason);
+        postToLogChannel("❌ Request for **" + pending.minecraftName + "** denied by " + staffName + ": " + reason);
         if (pending.hook != null) {
             try { pending.hook.editOriginal("❌ Your whitelist request was denied: " + reason).queue(); } catch (Exception ignored) {}
         }
@@ -181,30 +200,13 @@ public class WhitelistManager {
         }
 
         whitelistLogChannelId = channelId;
+        whitelistListMessageId = null;
+        findAndSetWhitelistListMessage();
         return true;
     }
 
     public void postWhitelistListNow() {
-        if (jda == null || whitelistLogChannelId == null || whitelistLogChannelId.isBlank()) {
-            return;
-        }
-
-        TextChannel channel = jda.getTextChannelById(whitelistLogChannelId);
-        if (channel == null) {
-            return;
-        }
-
-        StringBuilder message = new StringBuilder("Current whitelisted players:\n");
-        var links = PlayerLinkingManager.getInstance().getAllLinks();
-        if (links.isEmpty()) {
-            message.append("- None\n");
-        } else {
-            for (var link : links) {
-                message.append("- ").append(link.getMinecraftName()).append(" (Discord: ").append(link.getDiscordId()).append(")\n");
-            }
-        }
-
-        channel.sendMessage(message.toString()).queue();
+        updateWhitelistList();
     }
 
     public WhitelistResult adminUnlinkDiscordUser(User user, String reason, String adminTag) {
@@ -215,7 +217,7 @@ public class WhitelistManager {
             }
             var link = linkOpt.get();
             LinkingService.getInstance().removeLinkByUuid(link.getMinecraftUuid());
-            commandHandler.handleWhitelistRemove(link.getMinecraftUuid(), link.getMinecraftName(), "admin");
+            commandHandler.handleWhitelistRemove(link.getMinecraftUuid(), link.getMinecraftName(), "admin", "Unlinked by admin **" + adminTag + "**");
             return WhitelistResult.success("User unlinked.");
         } catch (Exception e) {
             LOGGER.error("Failed admin unlink", e);
@@ -251,5 +253,76 @@ public class WhitelistManager {
             this.requestedAt = requestedAt;
             this.hook = hook;
         }
+    }
+
+    private volatile String whitelistListMessageId;
+    private volatile long whitelistListChannelId;
+
+    public void setLogChannelInfo(long channelId, String messageId) {
+        this.whitelistListChannelId = channelId;
+        this.whitelistListMessageId = messageId;
+    }
+
+    public void updateWhitelistListMessage(String newContent) {
+        if (whitelistListMessageId == null || whitelistListMessageId.isBlank()) return;
+        if (whitelistListChannelId == 0) return;
+        TextChannel channel = jda.getTextChannelById(whitelistListChannelId);
+        if (channel == null) return;
+        try {
+            channel.editMessageById(whitelistListMessageId, newContent).queue();
+        } catch (Exception e) {
+            LOGGER.warn("Failed to edit whitelist list message: {}", e.getMessage());
+        }
+    }
+
+    public synchronized void updateWhitelistList() {
+        if (jda == null || whitelistLogChannelId == null || whitelistLogChannelId.isBlank()) return;
+        TextChannel channel = jda.getTextChannelById(whitelistLogChannelId);
+        if (channel == null) return;
+
+        String content = buildWhitelistListContent();
+
+        if (whitelistListMessageId != null && !whitelistListMessageId.isBlank()) {
+            try {
+                channel.editMessageById(whitelistListMessageId, content).queue();
+                return;
+            } catch (Exception ignored) {}
+        }
+
+        channel.sendMessage(content).queue(success -> {
+            whitelistListMessageId = success.getId();
+            whitelistListChannelId = channel.getIdLong();
+        });
+    }
+
+    public synchronized void findAndSetWhitelistListMessage() {
+        if (jda == null || whitelistLogChannelId == null || whitelistLogChannelId.isBlank()) return;
+        if (whitelistListMessageId != null && !whitelistListMessageId.isBlank()) return;
+        TextChannel channel = jda.getTextChannelById(whitelistLogChannelId);
+        if (channel == null) return;
+
+        channel.getHistory().retrievePast(10).queue(messages -> {
+            for (var msg : messages) {
+                if (msg != null && msg.getContentRaw().startsWith("Current whitelisted players:")) {
+                    whitelistListMessageId = msg.getId();
+                    whitelistListChannelId = channel.getIdLong();
+                    LOGGER.info("Found existing whitelist list message: {}", whitelistListMessageId);
+                    return;
+                }
+            }
+        });
+    }
+
+    public String buildWhitelistListContent() {
+        StringBuilder message = new StringBuilder("Current whitelisted players:\n");
+        var links = PlayerLinkingManager.getInstance().getAllLinks();
+        if (links.isEmpty()) {
+            message.append("- None\n");
+        } else {
+            for (var link : links) {
+                message.append("- ").append(link.getMinecraftName()).append(" (Discord: ").append(link.getDiscordId()).append(")\n");
+            }
+        }
+        return message.toString();
     }
 }

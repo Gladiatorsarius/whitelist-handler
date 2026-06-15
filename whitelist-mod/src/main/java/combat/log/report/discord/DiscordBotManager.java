@@ -109,6 +109,26 @@ public class DiscordBotManager {
         return config;
     }
 
+    public static void onInGameWhitelistAdd(String playerName, String playerUuid) {
+        if (whitelistManager == null) return;
+        try {
+            whitelistManager.postToLogChannel("✅ **" + playerName + "** was whitelisted (via console/ingame)");
+            whitelistManager.updateWhitelistList();
+        } catch (Exception e) {
+            LOGGER.warn("Failed to handle ingame whitelist add", e);
+        }
+    }
+
+    public static void onInGameWhitelistRemove(String playerName, String playerUuid) {
+        if (whitelistManager == null) return;
+        try {
+            whitelistManager.postToLogChannel("🔴 **" + playerName + "** was removed from the whitelist (via console/ingame)");
+            whitelistManager.updateWhitelistList();
+        } catch (Exception e) {
+            LOGGER.warn("Failed to handle ingame whitelist remove", e);
+        }
+    }
+
     private static void registerCommands() {
         if (jda == null) {
             return;
@@ -145,29 +165,44 @@ public class DiscordBotManager {
         );
     }
 
-    public static void sendWhitelistConfirmation(String requestId, boolean success, String playerName, String discordDisplayName, String error) {
+    public static void sendWhitelistConfirmation(String requestId, boolean success, String playerName, String discordDisplayName, String error, String requestedBy) {
         if (jda == null) return;
 
         try {
+            if (whitelistManager == null) return;
+
             if (success) {
-                // Post confirmation message to Discord (user's DM or a notification channel if available)
-                LOGGER.info("Whitelist confirmation for {}: {} (Discord: {})", playerName, success ? "approved" : "denied", discordDisplayName);
+                whitelistManager.updateRequestMessage(requestId, "✅ Your whitelist request for **" + playerName + "** has been approved!");
+                String approverNote = "discord".equals(requestedBy) ? "" : " (by " + requestedBy + ")";
+                whitelistManager.postToLogChannel("✅ **" + playerName + "** was whitelisted (Discord: " + discordDisplayName + ")" + approverNote);
+                whitelistManager.updateWhitelistList();
             } else {
-                LOGGER.warn("Whitelist confirmation for {}: failed - {}", playerName, error);
+                String errMsg = error != null ? error : "Unknown error";
+                whitelistManager.updateRequestMessage(requestId, "❌ Your whitelist request failed: " + errMsg);
+                whitelistManager.postToLogChannel("❌ Whitelist request for **" + playerName + "** failed: " + errMsg);
             }
         } catch (Exception e) {
             LOGGER.warn("Failed to post whitelist confirmation to Discord", e);
         }
     }
 
+    public static void sendWhitelistRemoveNotification(String playerName, boolean success, String error, String cause) {
+        sendWhitelistRemoveNotification(playerName, success, error);
+    }
+
     public static void sendWhitelistRemoveNotification(String playerName, boolean success, String error) {
         if (jda == null) return;
 
         try {
+            if (whitelistManager == null) return;
+
             if (success) {
-                LOGGER.info("Whitelist remove for {}: successful", playerName);
+                String msg = "🔴 **" + playerName + "** was removed from the whitelist" + (error != null && !error.isBlank() ? " (" + error + ")" : "");
+                whitelistManager.postToLogChannel(msg);
+                whitelistManager.updateWhitelistList();
             } else {
-                LOGGER.warn("Whitelist remove for {}: failed - {}", playerName, error);
+                String errMsg = error != null ? error : "Unknown error";
+                whitelistManager.postToLogChannel("❌ Failed to remove **" + playerName + "** from whitelist: " + errMsg);
             }
         } catch (Exception e) {
             LOGGER.warn("Failed to post whitelist remove notification to Discord", e);

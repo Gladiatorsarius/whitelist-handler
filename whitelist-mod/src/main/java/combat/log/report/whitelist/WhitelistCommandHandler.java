@@ -24,7 +24,6 @@ public class WhitelistCommandHandler {
         LOGGER.info("Processing whitelist add for player: {} ({}) - Discord: {}", playerName, playerUuid, discordDisplayName);
 
         try {
-            // Execute whitelist command using the server's command dispatcher
             String command = String.format("whitelist add %s", playerName);
             server.execute(() -> {
                 WhitelistCommandGuard.runIgnoringAdd(() ->
@@ -37,21 +36,18 @@ public class WhitelistCommandHandler {
 
             LOGGER.info("Added {} to whitelist", playerName);
 
-            // Send confirmation back to Discord (embedded)
-            DiscordBotManager.sendWhitelistConfirmation(requestId, true, playerName, discordDisplayName, null);
+            DiscordBotManager.sendWhitelistConfirmation(requestId, true, playerName, discordDisplayName, null, requestedBy);
 
         } catch (Exception e) {
             LOGGER.error("Failed to add player to whitelist: {}", playerName, e);
-
-            // Send error confirmation back to Discord
-            DiscordBotManager.sendWhitelistConfirmation(requestId, false, playerName, discordDisplayName, e.getMessage());
+            DiscordBotManager.sendWhitelistConfirmation(requestId, false, playerName, discordDisplayName, e.getMessage(), requestedBy);
         }
     }
 
     /**
      * Process a whitelist remove command
      */
-    public void handleWhitelistRemove(String playerUuid, String playerName, String cause) {
+    public void handleWhitelistRemove(String playerUuid, String playerName, String cause, String reason) {
         LOGGER.info("Processing whitelist remove for player: {} ({})", playerName, playerUuid);
 
         String command = String.format("whitelist remove %s", playerName);
@@ -66,11 +62,10 @@ public class WhitelistCommandHandler {
 
                 LOGGER.info("Removed {} from whitelist", playerName);
             } catch (Exception e) {
-                // Treat whitelist removal issues as non-fatal; unlink already succeeded.
                 LOGGER.warn("Whitelist remove reported an error for {}: {}", playerName, e.getMessage());
             }
 
-            DiscordBotManager.sendWhitelistRemoveNotification(playerName, true, null);
+            DiscordBotManager.sendWhitelistRemoveNotification(playerName, true, reason);
 
             ServerPlayer target = server.getPlayerList().getPlayerByName(playerName);
             if (target != null) {

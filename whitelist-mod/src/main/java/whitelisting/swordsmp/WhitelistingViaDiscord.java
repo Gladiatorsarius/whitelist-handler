@@ -82,7 +82,7 @@ public class WhitelistingViaDiscord implements ModInitializer {
 							// Remove link and notify whitelist handler
 							PlayerLinkingManager.getInstance().removeLink(uuid);
 							if (this.whitelistHandler != null) {
-								this.whitelistHandler.handleWhitelistRemove(uuid, player.getName().getString(), "player");
+                            this.whitelistHandler.handleWhitelistRemove(uuid, player.getName().getString(), "player", "Unlinked by player via /discord unlink");
 							}
 
 							player.connection.disconnect(Component.literal("You unlinked your Discord. Re-link in Discord to rejoin."));

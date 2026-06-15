@@ -89,11 +89,7 @@ public class WhitelistCommands extends ListenerAdapter {
         boolean ok = whitelistManager.setupWhitelistLogChannel(channelId);
         if (ok) {
             replyEphemeral(event, "✅ Whitelist log channel set to <#" + channelId + ">.");
-            try {
-                whitelistManager.postWhitelistListNow();
-            } catch (Exception ignore) {
-                LOGGER.warn("Failed to post whitelist list immediately", ignore);
-            }
+            whitelistManager.postWhitelistListNow();
         } else {
             replyEphemeral(event, "❌ Failed to set whitelist log channel. See bot logs.");
         }
