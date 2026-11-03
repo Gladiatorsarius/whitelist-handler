@@ -1,4 +1,10 @@
 {
+  "discord": {
+    "token": "",
+    "guildId": "",
+    "logChannelId": "",
+    "staffRoleId": ""
+  },
   "whitelist": {
     "autoExecute": true
   }

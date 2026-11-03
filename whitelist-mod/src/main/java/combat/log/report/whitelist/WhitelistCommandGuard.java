@@ -1,4 +1,4 @@
-package combat.log.report.whitelist;
+package whitelisting.swordsmp.whitelist;
 
 /**
  * Guards against reacting to mod-initiated whitelist commands.

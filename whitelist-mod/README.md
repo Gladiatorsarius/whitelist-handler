@@ -1,12 +1,12 @@
 # Whitelist Server Mod
 
-Fabric Minecraft mod that acts as the authoritative store for Discord↔Minecraft player links and coordinates with a Discord bot over WebSocket.
+Fabric Minecraft mod that embeds the Discord bot directly and acts as the authoritative store for Discord↔Minecraft player links.
 
 ## Core Responsibilities
 
 - **Persist player links**: Stores Discord↔Minecraft associations in `config/player-links.json`.
-- **WebSocket API**: Exposes a listener on the configured port that the Discord bot connects to.
-- **Whitelist coordination**: Handles `/whitelist add` and `/whitelist remove` commands, optionally coordinating with the bot.
+- **Embedded Discord bot**: Runs JDA inside the mod process and registers the whitelist slash commands.
+- **Whitelist coordination**: Handles `/whitelist add` and `/whitelist remove` commands from the server side.
 - **In-game commands**: Provides `/discord test` and `/discord unlink` for admins and players.
 
 ## Installation
@@ -26,20 +26,14 @@ Fabric Minecraft mod that acts as the authoritative store for Discord↔Minecraf
 
 ## Configuration
 
-The mod uses two configuration mechanisms:
+The embedded bot reads `config/whitelisting-via-discord.json` if present and falls back to environment variables for sensitive values.
 
-### Environment Variable (Recommended)
-Set the `DISCORD_SOCKET_URL` environment variable to specify the Discord bot's WebSocket endpoint:
+Supported settings:
 
-```bash
-# Example
-export DISCORD_SOCKET_URL=ws://localhost:8080/combat-log
-```
-
-If not set, the mod defaults to `ws://localhost:8080/combat-log`.
-
-### Optional: WebSocket Authentication
-If the Discord bot has `websocket.authToken` set in its config, ensure the bot and mod use matching tokens. The mod will include `Authorization: Bearer <token>` in the WebSocket handshake.
+- `discord.token`
+- `discord.guildId`
+- `discord.logChannelId`
+- `discord.staffRoleId`
 
 ## Data Storage
 
@@ -63,7 +57,7 @@ If the Discord bot has `websocket.authToken` set in its config, ensure the bot a
 ### `/discord test`
 - **Description**: Request the Discord bot to run its end-to-end test (create → lookup → unlink). Results appear in the bot's whitelist log channel.
 - **Usage**: `/discord test`
-- **Permission**: Server operator (OP or creative mode).
+- **Permission**: Server operator.
 
 ### `/discord unlink`
 - **Description**: Unlink your Discord account from Minecraft.
@@ -73,18 +67,15 @@ If the Discord bot has `websocket.authToken` set in its config, ensure the bot a
   - Self-unlink: `/discord unlink` (no arguments)
   - Admin unlink: `/discord unlink <player-name>`
 
-## WebSocket Protocol
+## Embedded Bot
 
-The mod connects to the Discord bot's WebSocket endpoint and exchanges JSON messages. See [../docs/websocket-api.md](../docs/websocket-api.md) for the protocol reference.
+The Discord bot now runs inside this mod process, so there is no separate WebSocket service to start or configure.
 
 ## Troubleshooting
 
-- **Mod cannot connect to bot**: Verify `DISCORD_SOCKET_URL` is set correctly and the bot's WebSocket server is running. Check firewall and network settings.
 - **Links not persisting**: Ensure the server has write permission to the `config/` directory.
 - **Commands not responding**: Verify the mod loaded successfully by checking server logs for `[Whitelisting via Discord]` messages.
-- **WebSocket connection errors**: If authentication is enabled, confirm both bot and mod have matching `authToken` values.
 
 ## See Also
 
-- [Discord Bot Setup](../discord-bot/README.md)
-- [WebSocket Protocol](../docs/websocket-api.md)
+- [Top-level project README](../README.md)
