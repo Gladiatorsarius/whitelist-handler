@@ -19,12 +19,9 @@ repositories {
 }
 
 loom {
-	splitEnvironmentSourceSets()
-
 	mods {
 		"whitelisting-via-discord" {
 			sourceSet sourceSets.main
-			sourceSet sourceSets.client
 		}
 	}
 
@@ -43,17 +40,18 @@ dependencies {
 	testImplementation 'org.junit.jupiter:junit-jupiter:5.10.0'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 
-	// JSON and WebSocket client for server↔bot communication
+	// JSON
 	implementation 'com.google.code.gson:gson:2.10.1'
 	include 'com.google.code.gson:gson:2.10.1'
-	
-	implementation 'com.squareup.okhttp3:okhttp:4.11.0'
-	include 'com.squareup.okhttp3:okhttp:4.11.0'
+
+	// HTTP client required by JDA at runtime (JDA 5 POM depends on okhttp 4.12.0)
+	implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+	include 'com.squareup.okhttp3:okhttp:4.12.0'
 	include 'com.squareup.okio:okio:3.6.0'
 	include 'com.squareup.okio:okio-jvm:3.6.0'
 	include 'org.jetbrains.kotlin:kotlin-stdlib:1.9.20'
-    
-	// Embedded Discord bot (JDA) and database/logging
+
+	// Embedded Discord bot (JDA) and logging
 	implementation 'net.dv8tion:JDA:5.0.0'
 	implementation 'com.neovisionaries:nv-websocket-client:2.14'
 	include 'net.dv8tion:JDA:5.0.0'
@@ -63,9 +61,6 @@ dependencies {
 	include 'club.minnced:opus-java:1.1.1'
 	include 'club.minnced:opus-java-natives:1.1.1'
 	include 'org.apache.commons:commons-collections4:4.4'
-	
-	implementation 'org.xerial:sqlite-jdbc:3.45.1.0'
-	include 'org.xerial:sqlite-jdbc:3.45.1.0'
 	
 	implementation 'org.slf4j:slf4j-api:2.0.9'
 	include 'org.slf4j:slf4j-api:2.0.9'
@@ -122,7 +117,7 @@ jar {
 	// Only bundle selected third-party libraries to avoid including Minecraft and huge transitive deps
 	def fatDeps = [
 		'jda', 'nv-websocket-client', 'okhttp', 'okio', 'gson', 'jackson', 'kotlin-stdlib',
-		'slf4j', 'logback', 'sqlite-jdbc', 'trove4j', 'commons-collections4', 'opus-java', 'jsr305'
+		'slf4j', 'logback', 'trove4j', 'commons-collections4', 'opus-java', 'jsr305'
 	]
 
 	from {

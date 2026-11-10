@@ -61,6 +61,10 @@ public class DiscordBotManager {
                     synchronized (DiscordBotManager.class) {
                         jda = built;
                         whitelistManager = new WhitelistManager(jda, handler);
+                        String configuredLogChannel = config.getLogChannelId();
+                        if (!configuredLogChannel.isBlank()) {
+                            whitelistManager.setupWhitelistLogChannel(configuredLogChannel);
+                        }
                         jda.addEventListener(
                             new WhitelistCommands(whitelistManager),
                             new WhitelistButtonHandler(whitelistManager),
@@ -103,6 +107,24 @@ public class DiscordBotManager {
 
     public static WhitelistManager getWhitelistManager() {
         return whitelistManager;
+    }
+
+    /** Persist the whitelist log channel so it survives restarts. */
+    public static boolean persistLogChannelId(String channelId) {
+        config.logChannelId = channelId;
+        try {
+            config.save(Paths.get("config"));
+            return true;
+        } catch (Exception e) {
+            LOGGER.warn("Failed to persist whitelist log channel to config", e);
+            return false;
+        }
+    }
+
+    /** Post a test message to the configured whitelist log channel. */
+    public static boolean sendTestMessage() {
+        if (whitelistManager == null) return false;
+        return whitelistManager.postToLogChannel("✅ Test message from in-game /discord test");
     }
 
     public static DiscordConfig getConfig() {
@@ -184,10 +206,6 @@ public class DiscordBotManager {
         } catch (Exception e) {
             LOGGER.warn("Failed to post whitelist confirmation to Discord", e);
         }
-    }
-
-    public static void sendWhitelistRemoveNotification(String playerName, boolean success, String error, String cause) {
-        sendWhitelistRemoveNotification(playerName, success, error);
     }
 
     public static void sendWhitelistRemoveNotification(String playerName, boolean success, String error) {

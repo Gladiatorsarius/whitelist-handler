@@ -3,9 +3,7 @@ package whitelisting.swordsmp.linking;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Optional;
-import java.util.UUID;
 
 /**
  * Small service facade around PlayerLinkingManager to simplify calls from Discord listeners.
@@ -22,17 +20,20 @@ public class LinkingService {
     }
 
     /**
-     * Create a link between a Discord ID and a Minecraft name.
-     * Generates a stable UUID from the player name if a real UUID is not provided.
+     * Create a link between a Discord ID and a Minecraft account.
      */
-    public void createLink(String discordId, String minecraftName, boolean whitelisted) {
+    public void createLink(String discordId, String minecraftUuid, String minecraftName, boolean whitelisted) {
         try {
-            String uuid = resolveUuidForName(minecraftName);
-            PlayerLinkingManager.getInstance().addLink(discordId, uuid, minecraftName, whitelisted);
-            LOGGER.info("Link created: Discord {} -> Minecraft {} ({})", discordId, minecraftName, uuid);
+            PlayerLinkingManager.getInstance().addLink(discordId, minecraftUuid, minecraftName, whitelisted);
+            LOGGER.info("Link created: Discord {} -> Minecraft {} ({})", discordId, minecraftName, minecraftUuid);
         } catch (Exception e) {
             LOGGER.error("Failed to create link for {} -> {}", discordId, minecraftName, e);
         }
+    }
+
+    /** Create a link after an atomic ownership check on the Minecraft UUID. */
+    public PlayerLinkingManager.AddLinkResult createLinkChecked(String discordId, String minecraftUuid, String minecraftName, boolean whitelisted) {
+        return PlayerLinkingManager.getInstance().addLinkChecked(discordId, minecraftUuid, minecraftName, whitelisted);
     }
 
     public void removeLinkByUuid(String minecraftUuid) {
@@ -45,12 +46,5 @@ public class LinkingService {
 
     public Optional<PlayerLink> getLinkByName(String name) {
         return PlayerLinkingManager.getInstance().getLinkByName(name);
-    }
-
-    private String resolveUuidForName(String name) {
-        if (name == null) return "";
-        // Stable name-based UUID (not Mojang UUID). Good enough until Mojang validation is added.
-        UUID uuid = UUID.nameUUIDFromBytes(name.toLowerCase().getBytes(StandardCharsets.UTF_8));
-        return uuid.toString();
     }
 }

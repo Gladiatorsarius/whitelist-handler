@@ -29,11 +29,6 @@ public class WhitelistModalHandler extends ListenerAdapter {
             return;
         }
 
-        if (modalId.startsWith("whitelist_link_modal:")) {
-            String payload = modalId.substring("whitelist_link_modal:".length());
-            handleLink(event, payload);
-            return;
-        }
     }
 
     private void handleWhitelistRequest(ModalInteractionEvent event) {
@@ -58,6 +53,13 @@ public class WhitelistModalHandler extends ListenerAdapter {
     }
 
     private void handleDeny(ModalInteractionEvent event, String requestId) {
+        // Recheck staff permission at the mutating endpoint; the opener may have
+        // lost the role between opening the modal and submitting it.
+        if (!whitelistManager.hasStaffPermission(event.getMember())) {
+            replyEphemeral(event, whitelistManager.message("whitelist.deny.noPermission", "❌ You don't have permission to deny requests."));
+            return;
+        }
+
         ModalMapping reasonMapping = event.getValue("deny_reason");
         String reason = reasonMapping != null ? reasonMapping.getAsString().trim() : "No reason provided";
 
@@ -65,24 +67,6 @@ public class WhitelistModalHandler extends ListenerAdapter {
         whitelistManager.denyRequest(requestId, event.getUser().getId(), event.getUser().getAsTag(), reason);
 
         replyEphemeral(event, whitelistManager.message("whitelist.deny.success", "❌ Request denied."));
-    }
-
-    private void handleLink(ModalInteractionEvent event, String payload) {
-        ModalMapping discordMapping = event.getValue("discord_user");
-        if (discordMapping == null) {
-            replyEphemeral(event, whitelistManager.message("whitelist.link.invalidUser", "❌ Invalid Discord user. Please use a mention or ID."));
-            return;
-        }
-
-        String discordRaw = discordMapping.getAsString().trim();
-        var result = whitelistManager.linkFromVanillaThread(payload, discordRaw, event.getUser().getId());
-
-        if (event.isAcknowledged()) {
-            event.getHook().sendMessage(result.message).setEphemeral(true).queue();
-            return;
-        }
-
-        event.reply(result.message).setEphemeral(true).queue();
     }
 
     private void replyEphemeral(ModalInteractionEvent event, String message) {

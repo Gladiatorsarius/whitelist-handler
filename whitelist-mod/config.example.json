@@ -1,11 +1,6 @@
 {
-  "discord": {
-    "token": "",
-    "guildId": "",
-    "logChannelId": "",
-    "staffRoleId": ""
-  },
-  "whitelist": {
-    "autoExecute": true
-  }
+  "token": "",
+  "guildId": "",
+  "logChannelId": "",
+  "staffRoleId": ""
 }

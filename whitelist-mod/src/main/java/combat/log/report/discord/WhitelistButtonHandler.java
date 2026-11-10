@@ -63,12 +63,20 @@ public class WhitelistButtonHandler extends ListenerAdapter {
     }
 
     private void handleApprove(ButtonInteractionEvent event, String requestId) {
+        if (!whitelistManager.hasStaffPermission(event.getMember())) {
+            event.reply(whitelistManager.message("whitelist.approve.noPermission", "❌ You don't have permission to approve requests.")).setEphemeral(true).queue();
+            return;
+        }
         event.editButton(event.getButton().asDisabled()).queue();
         whitelistManager.approveRequest(requestId, event.getUser().getId(), event.getUser().getAsTag());
         event.getHook().sendMessage(whitelistManager.message("whitelist.approve.actionMessage", "✅ Request approved! Whitelisting player...")).setEphemeral(true).queue();
     }
 
     private void showDenyModal(ButtonInteractionEvent event, String requestId) {
+        if (!whitelistManager.hasStaffPermission(event.getMember())) {
+            event.reply(whitelistManager.message("whitelist.deny.noPermission", "❌ You don't have permission to deny requests.")).setEphemeral(true).queue();
+            return;
+        }
         TextInput reasonInput = TextInput.create(
                 "deny_reason",
                 whitelistManager.message("whitelist.deny.modal.reasonLabel", "Reason for Denial"),
