@@ -2,6 +2,7 @@ package whitelisting.swordsmp.discord;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonSyntaxException;
 
 import java.io.IOException;
 import java.io.Reader;
@@ -14,9 +15,12 @@ import java.nio.file.Path;
  */
 public class DiscordConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+    private static final String FILE_NAME = "whitelisting-via-discord.json";
 
-    public String token;
-    public String guildId;
+    public String token = "";
+    public String guildId = "";
+    public String logChannelId = "";
+    public String staffRoleId = "";
 
     /**
      * Load or create Discord config from file.
@@ -30,16 +34,12 @@ public class DiscordConfig {
             Files.createDirectories(configDir);
         }
 
-        Path file = configDir.resolve("whitelisting-via-discord.json");
+        Path file = configDir.resolve(FILE_NAME);
 
         // If file doesn't exist, create it with defaults
         if (!Files.exists(file)) {
             DiscordConfig defaults = new DiscordConfig();
-            defaults.token = "";
-            defaults.guildId = "";
-
-            String json = GSON.toJson(defaults);
-            Files.write(file, json.getBytes());
+            defaults.save(configDir);
             return defaults;
         }
 
@@ -47,10 +47,15 @@ public class DiscordConfig {
         try (Reader reader = Files.newBufferedReader(file)) {
             DiscordConfig config = GSON.fromJson(reader, DiscordConfig.class);
             return config == null ? new DiscordConfig() : config;
-        } catch (IOException e) {
-            // On read error, return defaults
+        } catch (IOException | JsonSyntaxException e) {
+            // On read or parse error, return defaults
             return new DiscordConfig();
         }
+    }
+
+    /** Persist this config to the config directory. */
+    public void save(Path configDir) throws IOException {
+        Files.write(configDir.resolve(FILE_NAME), GSON.toJson(this).getBytes());
     }
 
     public String getToken() {
@@ -59,6 +64,14 @@ public class DiscordConfig {
 
     public String getGuildId() {
         return valueOrBlank(guildId);
+    }
+
+    public String getLogChannelId() {
+        return valueOrBlank(logChannelId);
+    }
+
+    public String getStaffRoleId() {
+        return valueOrBlank(staffRoleId);
     }
 
     private String valueOrBlank(String value) {

@@ -52,7 +52,7 @@ public class WhitelistingViaDiscord implements ModInitializer {
 		PlayerLinkingManager.initialize(configDir);
 		LOGGER.info("Initialized player linking system from {}", configDir.toAbsolutePath());
 
-		// Initialize embedded Discord bot (reads token from DISCORD_BOT_TOKEN)
+		// Initialize embedded Discord bot (reads token from config/whitelisting-via-discord.json)
 		DiscordBotManager.initialize(server);
 
 		// Initialize whitelist command handler (embedded mode, no external socket)
@@ -63,11 +63,15 @@ public class WhitelistingViaDiscord implements ModInitializer {
 		try {
 			server.getCommands().getDispatcher().register(
 				Commands.literal("discord")
-					.then(Commands.literal("test").executes(ctx -> {
-					// Embedded mode: post a test message to the configured log channel
-					DiscordBotManager.getJda();
-					ctx.getSource().sendSuccess(() -> Component.literal("Requested whitelist test. If the embedded bot is configured, it will post a test message to its log channel."), false);
-						return 1;
+					.then(Commands.literal("test").requires(Commands.hasPermission(Commands.LEVEL_GAMEMASTERS)).executes(ctx -> {
+						// Post a test message to the configured log channel (operator-only)
+						boolean sent = DiscordBotManager.sendTestMessage();
+						if (sent) {
+							ctx.getSource().sendSuccess(() -> Component.literal("Queued a test message to the whitelist log channel."), false);
+							return 1;
+						}
+						ctx.getSource().sendFailure(Component.literal("Discord bot is not configured or no whitelist log channel is set."));
+						return 0;
 					}))
 					.then(Commands.literal("unlink").requires(src -> src.getEntity() instanceof ServerPlayer).executes(ctx -> {
 						try {

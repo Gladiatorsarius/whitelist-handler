@@ -27,7 +27,7 @@ public class WhitelistCommandMixin {
 
             PlayerLinkingManager pm = PlayerLinkingManager.getInstance();
             var existing = pm.getLinkByName(name);
-            if (existing.isEmpty()) {
+            if (existing.isEmpty() && pm.getLinkByUuid(uuidStr).isEmpty()) {
                 pm.addLink("none", uuidStr, name, true);
             }
         }

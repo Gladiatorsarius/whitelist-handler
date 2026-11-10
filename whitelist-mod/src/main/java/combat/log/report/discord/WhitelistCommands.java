@@ -58,6 +58,11 @@ public class WhitelistCommands extends ListenerAdapter {
     }
 
     private void handleWhitelistSetup(SlashCommandInteractionEvent event) {
+        if (!whitelistManager.hasStaffPermission(event.getMember())) {
+            replyEphemeral(event, whitelistManager.message("whitelist.tickets.noPermission", "❌ You don't have permission to use this command."));
+            return;
+        }
+
         OptionMapping channelOption = event.getOption("channel");
         if (channelOption == null || channelOption.getAsChannel() == null) {
             replyEphemeral(event, whitelistManager.message("whitelist.setup.channelRequired", "❌ Channel ID is required"));
@@ -88,7 +93,12 @@ public class WhitelistCommands extends ListenerAdapter {
         String channelId = channelOption.getAsChannel().getId();
         boolean ok = whitelistManager.setupWhitelistLogChannel(channelId);
         if (ok) {
-            replyEphemeral(event, "✅ Whitelist log channel set to <#" + channelId + ">.");
+            boolean persisted = DiscordBotManager.persistLogChannelId(channelId);
+            if (persisted) {
+                replyEphemeral(event, "✅ Whitelist log channel set to <#" + channelId + ">.");
+            } else {
+                replyEphemeral(event, "⚠️ Whitelist log channel set to <#" + channelId + "> for this session, but saving it to the config file failed - it will not persist after a restart (see server log).");
+            }
             whitelistManager.postWhitelistListNow();
         } else {
             replyEphemeral(event, "❌ Failed to set whitelist log channel. See bot logs.");

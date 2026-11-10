@@ -70,8 +70,13 @@ public class WhitelistManager {
             var profile = profileOpt.get();
             String uuid = profile.getFormattedUuid();
 
-            // Create the link immediately (server authoritative is still player-links.json)
-            LinkingService.getInstance().createLink(user.getId(), profile.getName(), true);
+            // Resolved-UUID ownership check: a renamed account must not be claimable
+            // by a different Discord user. The link itself is written only after the
+            // server confirms the whitelist state (see WhitelistCommandHandler).
+            var byUuid = PlayerLinkingManager.getInstance().getLinkByUuid(uuid);
+            if (byUuid.isPresent() && !byUuid.get().getDiscordId().equals(user.getId())) {
+                return WhitelistResult.error("That Minecraft account is already linked to a different Discord user.");
+            }
 
             // Ask server to whitelist the player
             String requestId = java.util.UUID.randomUUID().toString();
@@ -119,17 +124,26 @@ public class WhitelistManager {
     }
 
     public void updateRequestMessage(String requestId, String newMessage) {
-        PendingWhitelistRequest pending = pendingRequests.get(requestId);
+        PendingWhitelistRequest pending = pendingRequests.remove(requestId);
         if (pending != null && pending.hook != null) {
             try { pending.hook.editOriginal(newMessage).queue(); } catch (Exception ignored) {}
         }
     }
 
-    public void postToLogChannel(String message) {
-        if (jda == null || whitelistLogChannelId == null || whitelistLogChannelId.isBlank()) return;
+    /** Queue a message to the log channel. Returns true when queued, not when delivered. */
+    public boolean postToLogChannel(String message) {
+        if (jda == null || whitelistLogChannelId == null || whitelistLogChannelId.isBlank()) return false;
         TextChannel channel = jda.getTextChannelById(whitelistLogChannelId);
-        if (channel != null) {
-            channel.sendMessage(message).queue();
+        if (channel == null) return false;
+        try {
+            channel.sendMessage(message).queue(
+                null,
+                error -> LOGGER.warn("Failed to deliver message to whitelist log channel: {}", error.getMessage())
+            );
+            return true;
+        } catch (Exception e) {
+            LOGGER.warn("Failed to queue message to whitelist log channel", e);
+            return false;
         }
     }
 
@@ -140,7 +154,8 @@ public class WhitelistManager {
     public boolean hasStaffPermission(Member member) {
         if (member == null) return false;
         if (member.hasPermission(Permission.MANAGE_SERVER)) return true;
-        String staffRole = System.getenv("DISCORD_STAFF_ROLE_ID");
+        String staffRole = DiscordBotManager.getConfig().getStaffRoleId();
+        if (staffRole.isBlank()) staffRole = System.getenv("DISCORD_STAFF_ROLE_ID");
         if (staffRole == null || staffRole.isBlank()) return false;
         final String targetStaffRole = staffRole;
         return member.getRoles().stream().anyMatch(r -> targetStaffRole.equals(r.getId()));
@@ -153,8 +168,8 @@ public class WhitelistManager {
             return;
         }
         LOGGER.info("Approving request {} by {}", requestId, staffName);
-        // Create authoritative link and whitelist
-        LinkingService.getInstance().createLink(pending.discordId, pending.minecraftName, true);
+        // Whitelist on the server; the link is written by WhitelistCommandHandler
+        // (checked insert) only after the whitelist state is confirmed.
         commandHandler.handleWhitelistAdd(requestId, pending.minecraftName, pending.minecraftUuid, pending.discordId, pending.discordTag, staffId);
         postToLogChannel("✅ Request for **" + pending.minecraftName + "** approved by " + staffName);
         if (pending.hook != null) {
@@ -225,11 +240,6 @@ public class WhitelistManager {
         }
     }
 
-    public WhitelistResult linkFromVanillaThread(String payload, String discordRaw, String userId) {
-        // Not implemented in simplified port.
-        return WhitelistResult.error("Not implemented in embedded mode");
-    }
-
     private static class PendingWhitelistRequest {
         private final String discordId;
         private final String discordTag;
@@ -257,23 +267,6 @@ public class WhitelistManager {
 
     private volatile String whitelistListMessageId;
     private volatile long whitelistListChannelId;
-
-    public void setLogChannelInfo(long channelId, String messageId) {
-        this.whitelistListChannelId = channelId;
-        this.whitelistListMessageId = messageId;
-    }
-
-    public void updateWhitelistListMessage(String newContent) {
-        if (whitelistListMessageId == null || whitelistListMessageId.isBlank()) return;
-        if (whitelistListChannelId == 0) return;
-        TextChannel channel = jda.getTextChannelById(whitelistListChannelId);
-        if (channel == null) return;
-        try {
-            channel.editMessageById(whitelistListMessageId, newContent).queue();
-        } catch (Exception e) {
-            LOGGER.warn("Failed to edit whitelist list message: {}", e.getMessage());
-        }
-    }
 
     public synchronized void updateWhitelistList() {
         if (jda == null || whitelistLogChannelId == null || whitelistLogChannelId.isBlank()) return;

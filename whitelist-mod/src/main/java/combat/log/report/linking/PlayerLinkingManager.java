@@ -54,10 +54,28 @@ public class PlayerLinkingManager {
         return instance;
     }
 
+    public enum AddLinkResult { OK, CONFLICT_UUID_OTHER_OWNER }
+
+    /**
+     * Atomically verify the Minecraft UUID is not already linked to a different
+     * Discord account, then insert. Prevents a renamed account being silently
+     * transferred to a new Discord owner.
+     */
+    public synchronized AddLinkResult addLinkChecked(String discordId, String minecraftUuid, String minecraftName, boolean whitelisted) {
+        PlayerLink byUuid = linksByUuid.get(minecraftUuid);
+        if (byUuid != null && !byUuid.getDiscordId().equals(discordId)) {
+            return AddLinkResult.CONFLICT_UUID_OTHER_OWNER;
+        }
+        addLink(discordId, minecraftUuid, minecraftName, whitelisted);
+        return AddLinkResult.OK;
+    }
+
     public synchronized void addLink(String discordId, String minecraftUuid, String minecraftName, boolean whitelisted) {
         PlayerLink link = new PlayerLink(discordId, minecraftUuid, minecraftName, whitelisted);
         linksByUuid.put(minecraftUuid, link);
-        linksByDiscord.put(discordId, link);
+        if (isRealDiscordId(discordId)) {
+            linksByDiscord.put(discordId, link);
+        }
         saveLinks();
         LOGGER.info("Added player link: Discord {} <-> Minecraft {} ({})", discordId, minecraftName, minecraftUuid);
     }
@@ -65,7 +83,9 @@ public class PlayerLinkingManager {
     public synchronized void removeLink(String minecraftUuid) {
         PlayerLink link = linksByUuid.remove(minecraftUuid);
         if (link != null) {
-            linksByDiscord.remove(link.getDiscordId());
+            if (isRealDiscordId(link.getDiscordId())) {
+                linksByDiscord.remove(link.getDiscordId());
+            }
             saveLinks();
             LOGGER.info("Removed player link for Minecraft UUID: {} ({})", minecraftUuid, link.getMinecraftName());
         }
@@ -109,6 +129,14 @@ public class PlayerLinkingManager {
         return new ArrayList<>(linksByUuid.values());
     }
 
+    /**
+     * Placeholder discord ids (null, blank, "none") come from in-game whitelist adds and
+     * must not be indexed by discord id, or every such link would share one map entry.
+     */
+    private static boolean isRealDiscordId(String discordId) {
+        return discordId != null && !discordId.isBlank() && !"none".equals(discordId);
+    }
+
     private void loadLinks() {
         if (!Files.exists(linkFile)) {
             LOGGER.info("No existing link file found at {}, starting fresh", linkFile);
@@ -121,7 +149,9 @@ public class PlayerLinkingManager {
             if (loadedLinks != null) {
                 for (PlayerLink link : loadedLinks.values()) {
                     linksByUuid.put(link.getMinecraftUuid(), link);
-                    linksByDiscord.put(link.getDiscordId(), link);
+                    if (isRealDiscordId(link.getDiscordId())) {
+                        linksByDiscord.put(link.getDiscordId(), link);
+                    }
                 }
                 LOGGER.info("Loaded {} player links from file", loadedLinks.size());
             }

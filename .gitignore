@@ -40,3 +40,7 @@ replay_*.log
 *.jfr
 
 config.local.json
+# runtime output
+logs/
+run/
+build.log
