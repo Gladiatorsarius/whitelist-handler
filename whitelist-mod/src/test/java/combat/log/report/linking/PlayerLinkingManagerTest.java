@@ -1,4 +1,4 @@
-package combat.log.report.linking;
+package whitelisting.swordsmp.linking;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;

@@ -45,7 +45,40 @@ dependencies {
 
 	// JSON and WebSocket client for server↔bot communication
 	implementation 'com.google.code.gson:gson:2.10.1'
+	include 'com.google.code.gson:gson:2.10.1'
+	
 	implementation 'com.squareup.okhttp3:okhttp:4.11.0'
+	include 'com.squareup.okhttp3:okhttp:4.11.0'
+	include 'com.squareup.okio:okio:3.6.0'
+	include 'com.squareup.okio:okio-jvm:3.6.0'
+	include 'org.jetbrains.kotlin:kotlin-stdlib:1.9.20'
+    
+	// Embedded Discord bot (JDA) and database/logging
+	implementation 'net.dv8tion:JDA:5.0.0'
+	implementation 'com.neovisionaries:nv-websocket-client:2.14'
+	include 'net.dv8tion:JDA:5.0.0'
+	include 'com.google.code.findbugs:jsr305:3.0.2'
+	include 'net.sf.trove4j:trove4j:3.0.3'
+	include 'com.neovisionaries:nv-websocket-client:2.14'
+	include 'club.minnced:opus-java:1.1.1'
+	include 'club.minnced:opus-java-natives:1.1.1'
+	include 'org.apache.commons:commons-collections4:4.4'
+	
+	implementation 'org.xerial:sqlite-jdbc:3.45.1.0'
+	include 'org.xerial:sqlite-jdbc:3.45.1.0'
+	
+	implementation 'org.slf4j:slf4j-api:2.0.9'
+	include 'org.slf4j:slf4j-api:2.0.9'
+	
+	implementation 'ch.qos.logback:logback-classic:1.4.14'
+	include 'ch.qos.logback:logback-classic:1.4.14'
+	include 'ch.qos.logback:logback-core:1.4.14'
+
+    // Jackson JSON (required by JDA for response parsing)
+    implementation 'com.fasterxml.jackson.core:jackson-databind:2.17.0'
+    include 'com.fasterxml.jackson.core:jackson-databind:2.17.0'
+    include 'com.fasterxml.jackson.core:jackson-core:2.17.0'
+    include 'com.fasterxml.jackson.core:jackson-annotations:2.17.0'
 
 }
 
@@ -80,6 +113,22 @@ jar {
 
 	from("LICENSE") {
 		rename { "${it}_${inputs.properties.archivesName}"}
+	}
+}
+
+// Produce a fat JAR including runtime dependencies so remapJar remaps a single artifact.
+jar {
+	duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+	// Only bundle selected third-party libraries to avoid including Minecraft and huge transitive deps
+	def fatDeps = [
+		'jda', 'nv-websocket-client', 'okhttp', 'okio', 'gson', 'jackson', 'kotlin-stdlib',
+		'slf4j', 'logback', 'sqlite-jdbc', 'trove4j', 'commons-collections4', 'opus-java', 'jsr305'
+	]
+
+	from {
+		configurations.runtimeClasspath.findAll { file ->
+			fatDeps.any { token -> file.name.toLowerCase().contains(token) }
+		}.collect { it.isDirectory() ? it : zipTree(it) }
 	}
 }
 

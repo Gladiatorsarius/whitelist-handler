@@ -1,10 +1,6 @@
-package combat.log.report.whitelist;
+package whitelisting.swordsmp.whitelist;
 
-import combat.log.report.socket.SocketClient;
-import combat.log.report.socket.UnlinkMessage;
-import combat.log.report.socket.WhitelistAddMessage;
-import combat.log.report.socket.WhitelistConfirmationMessage;
-import combat.log.report.socket.WhitelistRemoveConfirmationMessage;
+import whitelisting.swordsmp.discord.DiscordBotManager;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.server.MinecraftServer;
 import org.slf4j.Logger;
@@ -16,22 +12,19 @@ import org.slf4j.LoggerFactory;
 public class WhitelistCommandHandler {
     private static final Logger LOGGER = LoggerFactory.getLogger(WhitelistCommandHandler.class);
     private final MinecraftServer server;
-    private final SocketClient socketClient;
 
-    public WhitelistCommandHandler(MinecraftServer server, SocketClient socketClient) {
+    public WhitelistCommandHandler(MinecraftServer server) {
         this.server = server;
-        this.socketClient = socketClient;
     }
 
     /**
      * Process a whitelist add command
      */
-    public void handleWhitelistAdd(WhitelistAddMessage message) {
-        LOGGER.info("Processing whitelist add for player: {} ({})", message.getPlayerName(), message.getPlayerUuid());
+    public void handleWhitelistAdd(String requestId, String playerName, String playerUuid, String discordId, String discordDisplayName, String requestedBy) {
+        LOGGER.info("Processing whitelist add for player: {} ({}) - Discord: {}", playerName, playerUuid, discordDisplayName);
 
         try {
-            // Execute whitelist command using the server's command dispatcher
-            String command = String.format("whitelist add %s", message.getPlayerName());
+            String command = String.format("whitelist add %s", playerName);
             server.execute(() -> {
                 WhitelistCommandGuard.runIgnoringAdd(() ->
                     server.getCommands().performPrefixedCommand(
@@ -41,38 +34,23 @@ public class WhitelistCommandHandler {
                 );
             });
 
-            LOGGER.info("Added {} to whitelist", message.getPlayerName());
+            LOGGER.info("Added {} to whitelist", playerName);
 
-            // Send confirmation back to Discord
-            WhitelistConfirmationMessage confirmation = new WhitelistConfirmationMessage(
-                message.getRequestId(),
-                true,
-                message.getPlayerName(),
-                null
-            );
-            socketClient.sendMessage(confirmation);
+            DiscordBotManager.sendWhitelistConfirmation(requestId, true, playerName, discordDisplayName, null, requestedBy);
 
         } catch (Exception e) {
-            LOGGER.error("Failed to add player to whitelist: {}", message.getPlayerName(), e);
-
-            // Send error confirmation back to Discord
-            WhitelistConfirmationMessage confirmation = new WhitelistConfirmationMessage(
-                message.getRequestId(),
-                false,
-                message.getPlayerName(),
-                e.getMessage()
-            );
-            socketClient.sendMessage(confirmation);
+            LOGGER.error("Failed to add player to whitelist: {}", playerName, e);
+            DiscordBotManager.sendWhitelistConfirmation(requestId, false, playerName, discordDisplayName, e.getMessage(), requestedBy);
         }
     }
 
     /**
      * Process a whitelist remove command
      */
-    public void handleWhitelistRemove(UnlinkMessage message) {
-        LOGGER.info("Processing whitelist remove for player: {} ({})", message.getPlayerName(), message.getPlayerUuid());
+    public void handleWhitelistRemove(String playerUuid, String playerName, String cause, String reason) {
+        LOGGER.info("Processing whitelist remove for player: {} ({})", playerName, playerUuid);
 
-        String command = String.format("whitelist remove %s", message.getPlayerName());
+        String command = String.format("whitelist remove %s", playerName);
         server.execute(() -> {
             try {
                 WhitelistCommandGuard.runIgnoringRemove(() ->
@@ -82,22 +60,15 @@ public class WhitelistCommandHandler {
                     )
                 );
 
-                LOGGER.info("Removed {} from whitelist", message.getPlayerName());
+                LOGGER.info("Removed {} from whitelist", playerName);
             } catch (Exception e) {
-                // Treat whitelist removal issues as non-fatal; unlink already succeeded.
-                LOGGER.warn("Whitelist remove reported an error for {}: {}", message.getPlayerName(), e.getMessage());
+                LOGGER.warn("Whitelist remove reported an error for {}: {}", playerName, e.getMessage());
             }
 
-            WhitelistRemoveConfirmationMessage confirmation = new WhitelistRemoveConfirmationMessage(
-                true,
-                message.getPlayerName(),
-                null
-            );
-            socketClient.sendMessage(confirmation);
+            DiscordBotManager.sendWhitelistRemoveNotification(playerName, true, reason);
 
-            ServerPlayer target = server.getPlayerList().getPlayerByName(message.getPlayerName());
+            ServerPlayer target = server.getPlayerList().getPlayerByName(playerName);
             if (target != null) {
-                String cause = message.getCause();
                 String kickMessage = "You unlinked your Discord. Re-link in Discord to rejoin.";
                 if ("admin".equalsIgnoreCase(cause)) {
                     kickMessage = "A staff member unlinked your Discord. Go to Discord to re-link.";

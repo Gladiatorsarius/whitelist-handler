@@ -1,8 +1,0 @@
-{
-  "websocket": {
-    "serverUrl": "ws://localhost:8080/"
-  },
-  "features": {
-    "whitelistRequests": true
-  }
-}
